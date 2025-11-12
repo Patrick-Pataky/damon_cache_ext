@@ -83,4 +83,38 @@ if ! "$BASE_DIR/utils/disable-mglru.sh"; then
 	exit 1
 fi
 
+# # DAMON_RECLAIM with baseline and cache_ext
+# if ! source "$BASE_DIR/utils/activate-damon.sh"; then
+# 	echo "Failed to source activate-damon.sh. Please check the script."
+# 	exit 1
+# fi
+
+# damon_reclaim_enable
+
+# for param in 1 2 3; do
+# 	echo "Setting DAMON_RECLAIM config profile c$param"
+# 	damon_reclaim_set_config "$param"
+
+# 	# Baseline and cache_ext
+# 	for POLICY in "${POLICIES[@]}"; do
+# 		# Due to time constraints, only run DAMON_RECLAIM with cache_ext_lhd
+# 		if [[ "$POLICY" != "cache_ext_lhd" ]]; then
+# 			continue
+# 		fi
+
+# 		echo "Running policy: ${POLICY}"
+# 		python3 "$BENCH_PATH/bench_leveldb.py" \
+# 			--cpu 8 \
+# 			--policy-loader "$POLICY_PATH/${POLICY}.out" \
+# 			--results-file "$RESULTS_PATH/ycsb_results_damon_$param.json" \
+# 			--leveldb-db "$DB_PATH" \
+# 			--fadvise-hints "" \
+# 			--iterations "$ITERATIONS" \
+# 			--bench-binary-dir "$YCSB_PATH/build" \
+# 			--benchmark ycsb_a,ycsb_b,ycsb_c,ycsb_d,ycsb_e,ycsb_f,uniform,uniform_read_write
+# 	done
+# done
+
+# damon_reclaim_disable
+
 echo "YCSB benchmark completed. Results saved to $RESULTS_PATH."

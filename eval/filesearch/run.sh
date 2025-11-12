@@ -55,26 +55,26 @@ if ! "$BASE_DIR/utils/disable-mglru.sh"; then
 	exit 1
 fi
 
-# DAMON_RECLAIM with baseline and cache_ext
-if ! source "$BASE_DIR/utils/activate-damon.sh"; then
-	echo "Failed to source activate-damon.sh. Please check the script."
-	exit 1
-fi
+# # DAMON_RECLAIM with baseline and cache_ext
+# if ! source "$BASE_DIR/utils/activate-damon.sh"; then
+# 	echo "Failed to source activate-damon.sh. Please check the script."
+# 	exit 1
+# fi
 
-damon_reclaim_enable
+# damon_reclaim_enable
 
-for param in 1 2 3; do
-	echo "Setting DAMON_RECLAIM config profile c$param"
-	damon_reclaim_set_config "$param"
+# for param in 1 2 3; do
+# 	echo "Setting DAMON_RECLAIM config profile c$param"
+# 	damon_reclaim_set_config "$param"
 
-	python3 "$BENCH_PATH/bench_filesearch.py" \
-		--cpu 8 \
-		--policy-loader "$POLICY_PATH/cache_ext_mru.out" \
-		--results-file "$RESULTS_PATH/filesearch_results_damon_$param.json" \
-		--data-dir "$FILES_PATH" \
-		--iterations "$ITERATIONS"
-done
+# 	python3 "$BENCH_PATH/bench_filesearch.py" \
+# 		--cpu 8 \
+# 		--policy-loader "$POLICY_PATH/cache_ext_mru.out" \
+# 		--results-file "$RESULTS_PATH/filesearch_results_damon_$param.json" \
+# 		--data-dir "$FILES_PATH" \
+# 		--iterations "$ITERATIONS"
+# done
 
-damon_reclaim_disable
+# damon_reclaim_disable
 
 echo "File search benchmark completed. Results saved to $RESULTS_PATH."
