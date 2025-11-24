@@ -15,16 +15,23 @@ POLICY_PATH="$BASE_DIR/policies"
 FILES_PATH=$(realpath "$BASE_DIR/../linux")
 RESULTS_PATH="$BASE_DIR/results"
 
-ITERATIONS=3
+ITERATIONS=1
 
 mkdir -p "$RESULTS_PATH"
 
 # Run Benchmark on TinyLFU
 python3 "$BENCH_PATH/bench_interactive.py" \
-	--cpu 4 \
-	--policy-loader "$POLICY_PATH/cache_ext_fifo.out" \
+	--cpu 8 \
+	--policy-loader "$POLICY_PATH/cache_ext_tinylfu.out" \
 	--results-file "$RESULTS_PATH/interactive_results.json" \
 	--data-dir "$FILES_PATH" \
 	--iterations "$ITERATIONS"
 
 echo "Interactive benchmark completed. Results saved to $RESULTS_PATH."
+
+echo "Results:"
+cat results/interactive_results.json
+
+echo "Deleting Results\n"
+rm results/interactive_results.json
+
