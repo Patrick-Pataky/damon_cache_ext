@@ -2,8 +2,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
-
-#define NUM_HASH_FUNCTIONS 4
+#include "utils.h"
 
 struct hashes {
     uint32_t h[NUM_HASH_FUNCTIONS];

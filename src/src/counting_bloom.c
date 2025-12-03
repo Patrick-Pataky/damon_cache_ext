@@ -73,6 +73,10 @@ void counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
     }
 
     set_counter(cb, min_counter_idx, min_counter_value + 1);
+
+    if (min_counter_value + 1 >= (1ULL << SAMPLE_SIZE_BITS)) {
+        counting_bloom_reset(cb);
+    }
 }
 
 uint64_t counting_bloom_estimate(struct counting_bloom *cb, uint64_t addr)
@@ -95,4 +99,17 @@ uint64_t counting_bloom_estimate(struct counting_bloom *cb, uint64_t addr)
     }
 
     return min_counter_value;
+}
+
+void counting_bloom_reset(struct counting_bloom *cb)
+{
+    if (!cb) return;
+
+    size_t total_bits = cb->size * BITS_PER_COUNTER;
+    size_t num_words  = (total_bits + NUM_BITS(uint64_t) - 1)
+                            / NUM_BITS(uint64_t);
+
+    for (size_t i = 0; i < num_words; i++) {
+        cb->counters[i] = cb->counters[i] >> 1;
+    }
 }
