@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <string.h>
 #include "hash.h"
 #include "utils.h"
 
