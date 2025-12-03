@@ -18,9 +18,10 @@ void counting_bloom_free(struct counting_bloom **cb);
  * Given an address addr, for each of the k hash functions h_i,
  * increments the minimal counter among all h_i(addr).
  *
- * When a counter reaches W (= 1 << SAMPLE_SIZE_BITS), reset() is called.
+ * Returns true when a counter reaches W (= 1 << SAMPLE_SIZE_BITS),
+ * false otherwise.
  */
-void counting_bloom_add(struct counting_bloom *cb, uint64_t addr);
+bool counting_bloom_add(struct counting_bloom *cb, uint64_t addr);
 
 /**
  * Given an address addr, for each of the k hash functions h_i,

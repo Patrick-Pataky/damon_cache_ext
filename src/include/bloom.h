@@ -29,6 +29,11 @@ void bloom_free(struct bloom **b);
 void bloom_add(struct bloom *b, uint64_t addr);
 
 /**
+ * Clears all entries in the bloom filter b.
+ */
+void bloom_clear(struct bloom *b);
+
+/**
  * Checks if an address addr is possibly in the bloom filter b.
  * Returns true if possibly present, false if *definitely* not present.
  */

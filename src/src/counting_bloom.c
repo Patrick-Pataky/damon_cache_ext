@@ -51,7 +51,7 @@ static inline void set_counter(struct counting_bloom *cb, size_t idx,
     cb->counters[word_idx] |= (val & COUNTER_MASK) << bit_offset;
 }
 
-void counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
+bool counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
 {
     if (!cb) return;
 
@@ -74,9 +74,7 @@ void counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
 
     set_counter(cb, min_counter_idx, min_counter_value + 1);
 
-    if (min_counter_value + 1 >= (1ULL << SAMPLE_SIZE_BITS)) {
-        counting_bloom_reset(cb);
-    }
+    return (min_counter_value + 1) >= (1ULL << SAMPLE_SIZE_BITS);
 }
 
 uint64_t counting_bloom_estimate(struct counting_bloom *cb, uint64_t addr)
