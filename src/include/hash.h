@@ -3,43 +3,38 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-typedef uint32_t (*hash_fct)(const char* s, size_t len);
+#define NUM_HASH_FUNCTIONS 4
+
+struct hashes {
+    uint32_t h[NUM_HASH_FUNCTIONS];
+};
 
 /**
- * Note: the following hash functions are taken from:
- *       https://gist.github.com/sgsfak/9ba382a0049f6ee885f68621ae86079b
+ * Thomas Wang 64 bit Mix Functions
+ * https://gist.github.com/badboy/6267743
  */
+static __always_inline uint64_t hash_64(uint64_t key) {
+    key = (~key) + (key << 21); // key = (key << 21) - key - 1;
+    key = key ^ (key >> 24);
+    key = (key + (key << 3)) + (key << 8); // key * 265
+    key = key ^ (key >> 14);
+    key = (key + (key << 2)) + (key << 4); // key * 21
+    key = key ^ (key >> 28);
 
-/*
- * The Dan Bernstein popuralized hash..  See
- * https://github.com/pjps/ndjbdns/blob/master/cdb_hash.c#L26 Due to hash
- * collisions it seems to be replaced with "siphash" in n-djbdns, see
- * https://github.com/pjps/ndjbdns/commit/16cb625eccbd68045737729792f09b4945a4b508
- */
-uint32_t djb33_hash(const char* s, size_t len);
+    return key;
+}
 
-/*
- *
- * The Java hash, but really no-one seems to know where it came from, see
- * https://bugs.java.com/bugdatabase/view_bug.do?bug_id=4045622
- */
-uint32_t h31_hash(const char* s, size_t len);
+static __always_inline void get_hashes(
+    uint64_t key, struct hashes *out
+) {
+    uint64_t hash = hash_64(key);
 
-/*
- * The FNV Hash, or more precisely the "FNV-1a alternate algorithm"
- * See: http://www.isthe.com/chongo/tech/comp/fnv/
- *      https://en.wikipedia.org/wiki/Fowler–Noll–Vo_hash_function
- */
-uint32_t fnv32_hash(const char *s, size_t len);
+    uint32_t h1 = (uint32_t) hash;
+    uint32_t h2 = (uint32_t) (hash >> 32);
 
-/*
- * "This came from ejb's hsearch."
- */
-uint32_t ejb_hash(const char *s, size_t len);
+    // Formula: h_i = (h1 + i * h2)
+    for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        out->h[i] = h1 + i * h2;
+    }
+}
 
-/*
- * Bob Jenkins "One-at-a-time" hash
- */
-uint32_t oat_hash(const char *s, size_t len);
-
-extern hash_fct hash_functions[];

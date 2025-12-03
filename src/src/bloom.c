@@ -7,8 +7,11 @@ struct bit_vector* bit_vector_init(size_t num_bits) {
 
     if (res) {
         res->size = num_bits;
+
+        // Round up to nearest uint64_t
         size_t num_words = (num_bits + NUM_BITS(uint64_t) - 1)
                                 / NUM_BITS(uint64_t);
+
         res->start = (uint64_t*) calloc(num_words, sizeof(uint64_t));
 
         if (!res->start) {
@@ -64,11 +67,6 @@ struct bloom* bloom_init(size_t num_bits) {
             free(b);
             return NULL;
         }
-
-        b->hash_functions[0] = djb33_hash;
-        b->hash_functions[1] = fnv32_hash;
-        b->hash_functions[2] = ejb_hash;
-        b->hash_functions[3] = oat_hash;
     }
 
     return b;
@@ -82,20 +80,26 @@ void bloom_free(struct bloom **b) {
     }
 }
 
-void bloom_add(struct bloom *b, const char *s, size_t len) {
+void bloom_add(struct bloom *b, uint64_t addr) {
     if (!b) return;
 
+    struct hashes hs;
+    get_hashes(addr, &hs);
+
     for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
-        uint32_t hash = b->hash_functions[i](s, len);
+        uint32_t hash = hs.h[i];
         bit_vector_set(b->vector, hash % b->vector->size, true);
     }
 }
 
-bool bloom_check(struct bloom *b, const char *s, size_t len) {
+bool bloom_check(struct bloom *b, uint64_t addr) {
     if (!b) return false;
 
+    struct hashes hs;
+    get_hashes(addr, &hs);
+
     for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
-        uint32_t hash = b->hash_functions[i](s, len);
+        uint32_t hash = hs.h[i];
         if (!bit_vector_get(b->vector, hash % b->vector->size)) {
             return false;
         }
