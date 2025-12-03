@@ -55,35 +55,44 @@ void counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
 {
     if (!cb) return;
 
+    size_t   min_counter_idx   = 0;
+    uint64_t min_counter_value = UINT64_MAX;
+
     struct hashes hs;
     get_hashes(addr, &hs);
 
-    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+    for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
         uint32_t hash = hs.h[i];
         size_t idx = hash % cb->size;
 
         uint64_t val = get_counter(cb, idx);
-        if (val < COUNTER_MASK) {
-            set_counter(cb, idx, val + 1);
+        if (val < min_counter_value) {
+            min_counter_value = val;
+            min_counter_idx = idx;
         }
     }
+
+    set_counter(cb, min_counter_idx, min_counter_value + 1);
 }
 
-bool counting_bloom_contains(struct counting_bloom *cb, uint64_t addr)
+uint64_t counting_bloom_estimate(struct counting_bloom *cb, uint64_t addr)
 {
     if (!cb) return false;
+
+    uint64_t min_counter_value = UINT64_MAX;
 
     struct hashes hs;
     get_hashes(addr, &hs);
 
-    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+    for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
         uint32_t hash = hs.h[i];
         size_t idx = hash % cb->size;
 
-        if (get_counter(cb, idx) == 0) {
-            return false;
+        uint64_t val = get_counter(cb, idx);
+        if (val < min_counter_value) {
+            min_counter_value = val;
         }
     }
 
-    return true;
+    return min_counter_value;
 }

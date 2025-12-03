@@ -92,13 +92,13 @@ void bloom_add(struct bloom *b, uint64_t addr) {
     }
 }
 
-bool bloom_check(struct bloom *b, uint64_t addr) {
+bool bloom_contains(struct bloom *b, uint64_t addr) {
     if (!b) return false;
 
     struct hashes hs;
     get_hashes(addr, &hs);
 
-    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+    for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
         uint32_t hash = hs.h[i];
         if (!bit_vector_get(b->vector, hash % b->vector->size)) {
             return false;
