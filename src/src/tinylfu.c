@@ -37,10 +37,13 @@ void tinylfu_free(struct tinylfu **tfu) {
 void tinylfu_access(struct tinylfu *tfu, uint64_t addr) {
     if (!tfu) return;
 
-    if (!bloom_contains(tfu->doorkeeper, addr)) {
-        bloom_add(tfu->doorkeeper, addr);
+    struct hashes hs;
+    get_hashes(addr, &hs);
+
+    if (!bloom_contains_with_hashes(tfu->doorkeeper, &hs)) {
+        bloom_add_with_hashes(tfu->doorkeeper, &hs);
     } else {
-        if (counting_bloom_add(tfu->cbf, addr)) {
+        if (counting_bloom_add_with_hashes(tfu->cbf, &hs)) {
             /* Reset and clear the doorkeeper */
             counting_bloom_reset(tfu->cbf);
 
@@ -54,9 +57,12 @@ void tinylfu_access(struct tinylfu *tfu, uint64_t addr) {
 uint64_t tinylfu_estimate(struct tinylfu *tfu, uint64_t addr) {
     if (!tfu) return 0;
 
-    uint64_t estimate = counting_bloom_estimate(tfu->cbf, addr);
+    struct hashes hs;
+    get_hashes(addr, &hs);
 
-    if (!bloom_contains(tfu->doorkeeper, addr)) {
+    uint64_t estimate = counting_bloom_estimate_with_hashes(tfu->cbf, &hs);
+
+    if (!bloom_contains_with_hashes(tfu->doorkeeper, &hs)) {
         return estimate;
     }
 

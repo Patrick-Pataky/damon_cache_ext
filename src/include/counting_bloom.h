@@ -22,12 +22,14 @@ void counting_bloom_free(struct counting_bloom **cb);
  * false otherwise.
  */
 bool counting_bloom_add(struct counting_bloom *cb, uint64_t addr);
+bool counting_bloom_add_with_hashes(struct counting_bloom *cb, struct hashes *hs);
 
 /**
  * Given an address addr, for each of the k hash functions h_i,
  * returns the minimum counter value among all h_i(addr).
  */
 uint64_t counting_bloom_estimate(struct counting_bloom *cb, uint64_t addr);
+uint64_t counting_bloom_estimate_with_hashes(struct counting_bloom *cb, struct hashes *hs);
 
 /**
  * Resets all counters in the counting bloom filter to half their current value.

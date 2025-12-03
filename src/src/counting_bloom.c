@@ -51,19 +51,15 @@ static inline void set_counter(struct counting_bloom *cb, size_t idx,
     cb->counters[word_idx] |= (val & COUNTER_MASK) << bit_offset;
 }
 
-bool counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
+bool counting_bloom_add_with_hashes(struct counting_bloom *cb, struct hashes *hs)
 {
-    if (!cb) return false;
+    if (!cb || !hs) return false;
 
-    size_t   min_counter_idx   = 0;
     uint64_t min_counter_value = UINT64_MAX;
-
-    struct hashes hs;
-    get_hashes(addr, &hs);
 
     // 1. Find min value
     for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
-        uint32_t hash = hs.h[i];
+        uint32_t hash = hs->h[i];
         size_t idx = hash % cb->size;
 
         uint64_t val = get_counter(cb, idx);
@@ -79,7 +75,7 @@ bool counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
     }
 
     for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
-        uint32_t hash = hs.h[i];
+        uint32_t hash = hs->h[i];
         size_t idx = hash % cb->size;
         
         uint64_t val = get_counter(cb, idx);
@@ -91,17 +87,23 @@ bool counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
     return new_min >= COUNTER_MASK;
 }
 
-uint64_t counting_bloom_estimate(struct counting_bloom *cb, uint64_t addr)
+bool counting_bloom_add(struct counting_bloom *cb, uint64_t addr)
 {
     if (!cb) return false;
 
-    uint64_t min_counter_value = UINT64_MAX;
-
     struct hashes hs;
     get_hashes(addr, &hs);
+    return counting_bloom_add_with_hashes(cb, &hs);
+}
+
+uint64_t counting_bloom_estimate_with_hashes(struct counting_bloom *cb, struct hashes *hs)
+{
+    if (!cb || !hs) return 0;
+
+    uint64_t min_counter_value = UINT64_MAX;
 
     for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
-        uint32_t hash = hs.h[i];
+        uint32_t hash = hs->h[i];
         size_t idx = hash % cb->size;
 
         uint64_t val = get_counter(cb, idx);
@@ -111,6 +113,15 @@ uint64_t counting_bloom_estimate(struct counting_bloom *cb, uint64_t addr)
     }
 
     return min_counter_value;
+}
+
+uint64_t counting_bloom_estimate(struct counting_bloom *cb, uint64_t addr)
+{
+    if (!cb) return 0;
+
+    struct hashes hs;
+    get_hashes(addr, &hs);
+    return counting_bloom_estimate_with_hashes(cb, &hs);
 }
 
 void counting_bloom_reset(struct counting_bloom *cb)

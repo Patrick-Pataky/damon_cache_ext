@@ -33,34 +33,6 @@ void bit_vector_free(struct bit_vector **vect)
     }
 }
 
-bool bit_vector_get(struct bit_vector *vect, size_t bit_idx)
-{
-    if (!vect || bit_idx >= vect->size) {
-        return false;
-    }
-
-    size_t word_idx   = bit_idx / NUM_BITS(uint64_t);
-    size_t bit_offset = bit_idx % NUM_BITS(uint64_t);
-
-    return (vect->start[word_idx] >> bit_offset) & 1;
-}
-
-void bit_vector_set(struct bit_vector *vect, size_t bit_idx, bool value)
-{
-    if (!vect || bit_idx >= vect->size) {
-        return;
-    }
-
-    size_t word_idx   = bit_idx / NUM_BITS(uint64_t);
-    size_t bit_offset = bit_idx % NUM_BITS(uint64_t);
-
-    if (value) {
-        vect->start[word_idx] |= (1ULL << bit_offset);
-    } else {
-        vect->start[word_idx] &= ~(1ULL << bit_offset);
-    }
-}
-
 struct bloom* bloom_init(size_t num_bits)
 {
     struct bloom *b = (struct bloom*) malloc(sizeof(struct bloom));
@@ -86,17 +58,23 @@ void bloom_free(struct bloom **b)
     }
 }
 
+void bloom_add_with_hashes(struct bloom *b, struct hashes *hs)
+{
+    if (!b || !hs) return;
+
+    for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        uint32_t hash = hs->h[i];
+        bit_vector_set(b->vector, hash % b->vector->size, true);
+    }
+}
+
 void bloom_add(struct bloom *b, uint64_t addr)
 {
     if (!b) return;
 
     struct hashes hs;
     get_hashes(addr, &hs);
-
-    for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
-        uint32_t hash = hs.h[i];
-        bit_vector_set(b->vector, hash % b->vector->size, true);
-    }
+    bloom_add_with_hashes(b, &hs);
 }
 
 void bloom_clear(struct bloom *b)
@@ -108,18 +86,24 @@ void bloom_clear(struct bloom *b)
     memset(b->vector->start, 0, num_words * sizeof(uint64_t));
 }
 
+bool bloom_contains_with_hashes(struct bloom *b, struct hashes *hs)
+{
+    if (!b || !hs) return false;
+
+    for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        uint32_t hash = hs->h[i];
+        if (!bit_vector_get(b->vector, hash % b->vector->size)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool bloom_contains(struct bloom *b, uint64_t addr)
 {
     if (!b) return false;
 
     struct hashes hs;
     get_hashes(addr, &hs);
-
-    for (size_t i = 0; i < NUM_HASH_FUNCTIONS; i++) {
-        uint32_t hash = hs.h[i];
-        if (!bit_vector_get(b->vector, hash % b->vector->size)) {
-            return false;
-        }
-    }
-    return true;
+    return bloom_contains_with_hashes(b, &hs);
 }

@@ -71,7 +71,6 @@ void test_tinylfu(int n) {
 
     // Check estimates
     printf("Checking estimates (Item: Actual vs Estimate):\n");
-    bool all_good = true;
     for (int i = 0; i < num_items; i++) {
         uint64_t est = tinylfu_estimate(tfu, (uint64_t)i);
         printf("  %d: %d vs %" PRIu64 "\n", i, i + 1, est);
@@ -88,7 +87,6 @@ void test_tinylfu(int n) {
          printf("PASS: TinyLFU admits 9 (freq 10) over 0 (freq 1)\n");
     } else {
          printf("FAIL: TinyLFU did NOT admit 9 (freq 10) over 0 (freq 1)\n");
-         all_good = false;
     }
 
     // 0 should NOT be admitted over 9
@@ -96,7 +94,6 @@ void test_tinylfu(int n) {
          printf("PASS: TinyLFU rejects 0 (freq 1) over 9 (freq 10)\n");
     } else {
          printf("FAIL: TinyLFU admitted 0 (freq 1) over 9 (freq 10)\n");
-         all_good = false;
     }
 
     tinylfu_free(&tfu);
@@ -141,7 +138,7 @@ void test_counting_bloom(int n) {
     printf("Counting Bloom Filter test complete.\n\n");
 }
 
-int main(int argc, char** argv) {
+int main(void) {
     test_bloom(1000);
     test_counting_bloom(100);
     test_tinylfu(100);
