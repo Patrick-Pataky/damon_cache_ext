@@ -1,7 +1,7 @@
 # File search benchmark
 
 This script benchmarks file search performance with ripgrep using a MRU policy.
-It corresponds to Figure 6 in the paper.
+It corresponds to Figure 9 in the paper.
 
 Outputs:
 

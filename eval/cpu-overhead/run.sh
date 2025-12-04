@@ -12,7 +12,7 @@ SCRIPT_PATH=$(realpath $0)
 BASE_DIR=$(realpath "$(dirname $SCRIPT_PATH)/../../")
 BENCH_PATH="$BASE_DIR/bench"
 FIO_DIR=$(realpath "$BASE_DIR/../fio_dir")
-RESULTS_PATH="$BASE_DIR/results"
+RESULTS_PATH=${1:-"$BASE_DIR/results"}
 
 ITERATIONS=1
 

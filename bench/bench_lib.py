@@ -572,7 +572,7 @@ class BenchmarkFramework(ABC):
             cmd = self.benchmark_cmd(config)
 
             # Limit CPUs
-            cmd = ["taskset", "-c", "0-%s" % str(config["cpus"] - 1)] + cmd
+            cmd = ["sudo", "taskset", "-c", "0-%s" % str(config["cpus"] - 1)] + cmd
 
             env = os.environ
             if self.args.debug_segfault:

@@ -14,7 +14,7 @@ BENCH_PATH="$BASE_DIR/bench"
 POLICY_PATH="$BASE_DIR/policies"
 YCSB_PATH="$BASE_DIR/My-YCSB"
 DB_DIRS=$(realpath "$BASE_DIR/../")
-RESULTS_PATH="$BASE_DIR/results"
+RESULTS_PATH=${1:-"$BASE_DIR/results"}
 
 ITERATIONS=3
 
