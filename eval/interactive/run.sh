@@ -13,12 +13,14 @@ BASE_DIR=$(realpath "$(dirname $SCRIPT_PATH)/../../")
 BENCH_PATH="$BASE_DIR/bench"
 POLICY_PATH="$BASE_DIR/policies"
 FILES_PATH=$(realpath "$BASE_DIR/../linux")
-RESULTS_PATH="$BASE_DIR/results"
+RESULTS_PATH="$BASE_DIR/results/interactive"
 
 ITERATIONS=1
 
 mkdir -p "$RESULTS_PATH"
 
+#echo "Deleting Results"
+#rm results/interactive_results.json
 # Run Benchmark on TinyLFU
 python3 "$BENCH_PATH/bench_interactive.py" \
 	--cpu 8 \
@@ -31,7 +33,3 @@ echo "Interactive benchmark completed. Results saved to $RESULTS_PATH."
 
 echo "Results:"
 cat results/interactive_results.json
-
-echo "Deleting Results\n"
-rm results/interactive_results.json
-
