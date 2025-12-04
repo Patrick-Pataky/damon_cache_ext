@@ -47,6 +47,7 @@ This should not call any cache_ext_list helpers.
 */
 static int bpf_tinylfu_evict_cb(int idx, struct cache_ext_list_node *a)
 {
+	bpf_printk("cache_ext: TinyLFU: Eviction:  %ld\n", a->folio->mapping->host->i_ino);
 	if (!folio_test_uptodate(a->folio) || !folio_test_lru(a->folio))
 		return CACHE_EXT_CONTINUE_ITER;
 
@@ -58,7 +59,6 @@ static int bpf_tinylfu_evict_cb(int idx, struct cache_ext_list_node *a)
 
 void BPF_STRUCT_OPS(tinylfu_evict_folios, struct cache_ext_eviction_ctx *eviction_ctx, struct mem_cgroup *memcg)
 {
-	bpf_printk("cache_ext: TinyLFU: evict: Eviction Algorithm called\n");
 	if (bpf_cache_ext_list_iterate(memcg, main_list, bpf_tinylfu_evict_cb, eviction_ctx) < 0) {
 		bpf_printk("cache_ext: evict: Failed to iterate main_list\n");
 		return;
@@ -66,23 +66,26 @@ void BPF_STRUCT_OPS(tinylfu_evict_folios, struct cache_ext_eviction_ctx *evictio
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_evicted, struct folio *folio) {
-	bpf_printk("cache_ext: TinyLFU: Evicted Folio %p\n", folio);
+	bpf_printk("cache_ext: TinyLFU: Evicted Folio %ld\n", folio->mapping->host->i_ino);
 	// TODO: Why does fifo not do anything in this hook ?
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
-	bpf_printk("cache_ext: added: TinyLFU: Added Folio %p\n", folio);
 	if (!is_folio_relevant(folio))
 		return;
 
+	bpf_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
+
 	if (bpf_cache_ext_list_add_tail(main_list, folio)) {
-		bpf_printk("cache_ext: added: Failed to add folio to main_list\n");
+		//bpf_printk("cache_ext: added: Failed to add folio to main_list\n");
 		return;
 	}
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
-	bpf_printk("cache_ext: TinyLFU: Accessed Folio %p", folio);
+	if (!is_folio_relevant(folio))
+		return;
+	bpf_printk("cache_ext: TinyLFU: Access:    %ld", folio->mapping->host->i_ino);
 }
 
 /*
@@ -96,7 +99,7 @@ void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
  * damon_cache_ext/rocksdb/cachestream/bpf/cachestream_admit_hook.bpf.c
  */
 bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *admission_ctx) {
-	bpf_printk("cache_ext: admission: TinyLFU: Making Admission Decision\n");
+	bpf_printk("cache_ext: TinyLFU: Admission: %ld \n", admission_ctx->ino);
 	return false;
 }
 
