@@ -1,0 +1,18 @@
+
+Benchmark run started at Thu Nov 13 08:27:52 UTC 2025
+Running benchmark: cpu-overhead
+Completed benchmark: cpu-overhead
+-----------------------------------
+Running benchmark: filesearch
+Completed benchmark: filesearch
+-----------------------------------
+Running benchmark: get-scan
+Completed benchmark: get-scan
+-----------------------------------
+Running benchmark: isolation
+Completed benchmark: isolation
+-----------------------------------
+Running benchmark: twitter
+Completed benchmark: twitter
+-----------------------------------
+Running benchmark: ycsb

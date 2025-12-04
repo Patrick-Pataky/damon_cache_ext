@@ -17,7 +17,7 @@ DB_PATH=$(realpath "$BASE_DIR/../leveldb")
 SEARCH_PATH=$(realpath "$BASE_DIR/../cgroup")
 FILES_PATH="$SEARCH_PATH/linux"
 TEMP_DB_PATH="$SEARCH_PATH/leveldb_temp"
-RESULTS_PATH="$BASE_DIR/results"
+RESULTS_PATH=${1:-"$BASE_DIR/results"}
 
 ITERATIONS=3
 

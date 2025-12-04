@@ -81,7 +81,6 @@ class FileSearchBenchmark(BenchmarkFramework):
             f"for i in $(seq 1 {config['passes']}); do {rg_cmd} > /dev/null; done"
         )
         cmd = [
-            "sudo",
             "cgexec",
             "-g",
             "memory:%s" % config["cgroup_name"],
