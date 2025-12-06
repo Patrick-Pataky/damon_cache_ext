@@ -1,0 +1,44 @@
+diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
+index 3086502ac..7edd5127f 100644
+--- a/include/linux/mm_types.h
++++ b/include/linux/mm_types.h
+@@ -1389,6 +1389,12 @@ struct cache_ext_admission_ctx {
+ 	u64 ino;
+ 	u64 offset;
+ 	u64 size;
++
++	/**
++	 * victim_id = ino + offset
++	 * 0 means invalid
++	 */
++	u64 victim_id;
+ };
+ 
+ // TODO: How can I make only some fields cache_ext_eviction_ctx writeable?
+diff --git a/mm/filemap.c b/mm/filemap.c
+index b84763395..a0d869acc 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -2658,7 +2658,22 @@ static int filemap_get_pages(struct kiocb *iocb, size_t count,
+ 				.ino = filp->f_inode->i_ino,
+ 				.offset = iocb->ki_pos,
+ 				.size = count,
++				.victim_id = 0,
+ 			};
++
++			/* Get a victim candidate to compare against */
++			struct cache_ext_eviction_ctx evict_ctx = {
++				.request_nr_folios_to_evict = 1,
++			};
++			if (cache_ext_ops->evict_folios) {
++				cache_ext_ops->evict_folios(&evict_ctx, memcg);
++				if (evict_ctx.nr_folios_to_evict > 0) {
++					struct folio *victim = evict_ctx.folios_to_evict[0];
++					ctx.victim_id = victim->mapping->host->i_ino +
++							(victim->index << PAGE_SHIFT);
++				}
++			}
++
+ 			ret = cache_ext_ops->admit_folio(&ctx);
+ 		}
+ 
