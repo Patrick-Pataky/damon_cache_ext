@@ -10,8 +10,8 @@ char _license[] SEC("license") = "GPL";
 
 // Constants
 #define CHAR_BIT 8
+#define PAGE_SHIFT 12
 #define NUM_BITS(type) (sizeof(type) * CHAR_BIT)
-
 #define DOORKEEPER_SIZE 10240
 #define CBF_SIZE 10240
 #define NUM_HASH_FUNCTIONS 4
@@ -24,6 +24,9 @@ char _license[] SEC("license") = "GPL";
 // #define CACHE_SIZE_BITS 33
 
 #define SAMPLE_SIZE_BITS (BITS_PER_COUNTER + CACHE_SIZE_BITS)
+
+#define FOLIO_ID(ino, index) (ino + (index << PAGE_SHIFT))
+#define FOLIO_ID_FROM_FOLIO(folio) FOLIO_ID(folio->mapping->host->i_ino, folio->index)
 
 static u64 global_counter = 0;
 
@@ -197,83 +200,76 @@ static __always_inline u32 tinylfu_estimate(u64 addr) {
 	return estimate;
 }
 
-inline bool is_folio_relevant(struct folio *folio)
-{
-	if (!folio) {
-		return false;
-	}
-	if (folio->mapping == NULL) {
-		return false;
-	}
-	if (folio->mapping->host == NULL) {
-		return false;
-	}
-	bool res = inode_in_watchlist(folio->mapping->host->i_ino);
-	return res;
-}
+
+
+/******************************************************************************
+ * Backend Interface **********************************************************
+ *****************************************************************************/
+
+/*
+ * This interface allows TinyLFU to be composed with any underlying eviction
+ * policy (e.g., MRU, LRU).
+ */
+struct cache_policy_backend {
+	s32  (*init)(struct mem_cgroup *memcg);
+	void (*evict_folios)(struct cache_ext_eviction_ctx *ctx, struct mem_cgroup *memcg);
+	void (*folio_added)(struct folio *folio);
+	void (*folio_accessed)(struct folio *folio);
+	void (*folio_evicted)(struct folio *folio);
+};
+
+/******************************************************************************
+ * MRU Backend Implementation *************************************************
+ *****************************************************************************/
 
 __u64 main_list;
 
-s32 BPF_STRUCT_OPS_SLEEPABLE(tinylfu_init, struct mem_cgroup *memcg)
+static int iterate_mru(int idx, struct cache_ext_list_node *node)
 {
-	bpf_printk("cache_ext: TinyLFU: Initialize TinyLFU\n");
-
-	main_list = bpf_cache_ext_ds_registry_new_list(memcg);
-	if (main_list == 0) {
-		bpf_printk("cache_ext: init: Failed to create main_list\n");
-		return -1;
+	if ((idx < 200) && (!folio_test_uptodate(node->folio) || !folio_test_lru(node->folio))) {
+		return CACHE_EXT_CONTINUE_ITER;
 	}
-	bpf_printk("cache_ext: Created main_list: %llu\n", main_list);
-	return 0;
-}
-
-/* 
-This callback is passed to bpf_cache_ext_list_iterate and decides what to do with the current folio.
-Depending on the returned value, bpf_cache_ext_list_iterate does one of the following:
-- CACHE_EXT_CONTINUE_ITER	: Ignore current folio and continue iteration
-- CACHE_EXT_EVICT_NODE		: Add the current folio to the eviction candidates 
-							  (bpf_cache_ext_list_iterate takes care of changing the eviction context)
-- CACHE_EXT_STOP_ITER		: Stops iterating, acts ~ like break in a loop.
-
-This should not call any cache_ext_list helpers.
-(see comment in linux-cache-ext/include/mm/cache_ext_ds.c before bpf_cache_ext_list_iterate)
-*/
-static int bpf_tinylfu_evict_cb(int idx, struct cache_ext_list_node *a)
-{
-	bpf_printk("cache_ext: TinyLFU: Eviction:  %ld\n", a->folio->mapping->host->i_ino);
-	if (!folio_test_uptodate(a->folio) || !folio_test_lru(a->folio))
-		return CACHE_EXT_CONTINUE_ITER;
-
-	if (folio_test_dirty(a->folio) || folio_test_writeback(a->folio))
-		return CACHE_EXT_CONTINUE_ITER;
-
 	return CACHE_EXT_EVICT_NODE;
 }
 
-void BPF_STRUCT_OPS(tinylfu_evict_folios, struct cache_ext_eviction_ctx *eviction_ctx, struct mem_cgroup *memcg)
+s32 mru_init(struct mem_cgroup *memcg)
 {
-	if (bpf_cache_ext_list_iterate(memcg, main_list, bpf_tinylfu_evict_cb, eviction_ctx) < 0) {
-		bpf_printk("cache_ext: evict: Failed to iterate main_list\n");
-		return;
-	}
+	main_list = bpf_cache_ext_ds_registry_new_list(memcg);
+	if (main_list == 0) return -1;
+	return 0;
 }
 
-void BPF_STRUCT_OPS(tinylfu_folio_evicted, struct folio *folio) {
-	bpf_printk("cache_ext: TinyLFU: Evicted Folio %ld\n", folio->mapping->host->i_ino);
-	// TODO: Why does fifo not do anything in this hook ?
+void mru_folio_added(struct folio *folio)
+{
+	bpf_cache_ext_list_add(main_list, folio);
 }
 
-void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
-	if (!is_folio_relevant(folio))
-		return;
-
-	bpf_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
-
-	if (bpf_cache_ext_list_add_tail(main_list, folio)) {
-		//bpf_printk("cache_ext: added: Failed to add folio to main_list\n");
-		return;
-	}
+void mru_folio_accessed(struct folio *folio)
+{
+	bpf_cache_ext_list_move(main_list, folio, false);
 }
+
+void mru_folio_evicted(struct folio *folio)
+{
+	bpf_cache_ext_list_del(folio);
+}
+
+void mru_evict_folios(struct cache_ext_eviction_ctx *eviction_ctx, struct mem_cgroup *memcg)
+{
+	bpf_cache_ext_list_iterate(memcg, main_list, iterate_mru, eviction_ctx);
+}
+
+static const struct cache_policy_backend backend = {
+	.init = mru_init,
+	.evict_folios = mru_evict_folios,
+	.folio_added = mru_folio_added,
+	.folio_accessed = mru_folio_accessed,
+	.folio_evicted = mru_folio_evicted,
+};
+
+/******************************************************************************
+ * TinyLFU Implementation *****************************************************
+ *****************************************************************************/
 
 static inline bool is_folio_relevant(struct folio *folio) {
 	if (!folio || !folio->mapping || !folio->mapping->host)
@@ -282,15 +278,44 @@ static inline bool is_folio_relevant(struct folio *folio) {
 	return inode_in_watchlist(folio->mapping->host->i_ino);
 }
 
+s32 BPF_STRUCT_OPS_SLEEPABLE(tinylfu_init, struct mem_cgroup *memcg)
+{
+	bpf_printk("cache_ext: TinyLFU: Initialize TinyLFU\n");
+	return backend.init(memcg);
+}
+
+void BPF_STRUCT_OPS(
+	tinylfu_evict_folios,
+	struct cache_ext_eviction_ctx *eviction_ctx,
+	struct mem_cgroup *memcg
+) {
+	backend.evict_folios(eviction_ctx, memcg);
+}
+
+void BPF_STRUCT_OPS(tinylfu_folio_evicted, struct folio *folio) {
+	bpf_printk("cache_ext: TinyLFU: Evicted Folio %ld\n", folio->mapping->host->i_ino);
+	backend.folio_evicted(folio);
+}
+
+void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
+	if (!is_folio_relevant(folio))
+		return;
+
+	bpf_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
+	backend.folio_added(folio);
+}
+
+
+
 void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
 	if (!is_folio_relevant(folio))
 		return;
 
 	bpf_printk("cache_ext: TinyLFU: Access:    %ld", folio->mapping->host->i_ino);
 
-	u64 addr = (u64)folio; // Use folio address as key
+	u64 id = FOLIO_ID_FROM_FOLIO(folio);
 	u32 h[NUM_HASH_FUNCTIONS];
-	get_hashes(addr, h);
+	get_hashes(id, h);
 
 	if (!doorkeeper_contains(h)) {
 		doorkeeper_add(h);
@@ -299,6 +324,8 @@ void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
 			cbf_reset();
 		}
 	}
+
+	backend.folio_accessed(folio);
 }
 
 /*
@@ -312,24 +339,24 @@ void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
  * damon_cache_ext/rocksdb/cachestream/bpf/cachestream_admit_hook.bpf.c
  */
 bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *admission_ctx) {
-	bpf_printk("cache_ext: TinyLFU: Admission: %ld \n", admission_ctx->ino);
+	u64 new_id = FOLIO_ID(admission_ctx->ino, admission_ctx->offset);
+	u64 victim_id = admission_ctx->victim_id;
+	
+	bpf_printk("cache_ext: TinyLFU: Admission: New %llu vs Victim %llu\n", new_id, victim_id);
 
-	struct folio *new_folio = admission_ctx->new_folio;
-	struct folio *victim_folio = admission_ctx->victim_folio;
+	if (victim_id == 0) {
+		// No victim (cache likely not full), always admit.
+		return false;
+	}
 
-	// If new folio is not relevant, admit it (bypass filter)
-	if (!is_folio_relevant(new_folio))
-		return true;
+	u32 new_est = tinylfu_estimate(new_id);
+	u32 victim_est = tinylfu_estimate(victim_id);
 
-	u64 new_addr = (u64)new_folio;
-	u64 victim_addr = (u64)victim_folio;
+	bpf_printk("TinyLFU: Estimate New %u vs Victim %u\n", new_est, victim_est);
 
-	u32 new_est = tinylfu_estimate(new_addr);
-	u32 victim_est = tinylfu_estimate(victim_addr);
-
-	// bpf_printk("TinyLFU: new %u, victim %u\n", new_est, victim_est);
-
-	return new_est > victim_est;
+	// If new_est > victim_est, we want to ADMIT (return false).
+	// Otherwise, we want to REJECT (return true).
+	return new_est <= victim_est;
 }
 
 SEC(".struct_ops.link")
