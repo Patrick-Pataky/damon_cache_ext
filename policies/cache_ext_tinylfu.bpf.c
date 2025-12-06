@@ -200,24 +200,6 @@ static __always_inline u32 tinylfu_estimate(u64 addr) {
 	return estimate;
 }
 
-
-
-/******************************************************************************
- * Backend Interface **********************************************************
- *****************************************************************************/
-
-/*
- * This interface allows TinyLFU to be composed with any underlying eviction
- * policy (e.g., MRU, LRU).
- */
-struct cache_policy_backend {
-	s32  (*init)(struct mem_cgroup *memcg);
-	void (*evict_folios)(struct cache_ext_eviction_ctx *ctx, struct mem_cgroup *memcg);
-	void (*folio_added)(struct folio *folio);
-	void (*folio_accessed)(struct folio *folio);
-	void (*folio_evicted)(struct folio *folio);
-};
-
 /******************************************************************************
  * MRU Backend Implementation *************************************************
  *****************************************************************************/
@@ -232,40 +214,32 @@ static int iterate_mru(int idx, struct cache_ext_list_node *node)
 	return CACHE_EXT_EVICT_NODE;
 }
 
-s32 mru_init(struct mem_cgroup *memcg)
+static s32 mru_init(struct mem_cgroup *memcg)
 {
 	main_list = bpf_cache_ext_ds_registry_new_list(memcg);
 	if (main_list == 0) return -1;
 	return 0;
 }
 
-void mru_folio_added(struct folio *folio)
+static void mru_folio_added(struct folio *folio)
 {
 	bpf_cache_ext_list_add(main_list, folio);
 }
 
-void mru_folio_accessed(struct folio *folio)
+static void mru_folio_accessed(struct folio *folio)
 {
 	bpf_cache_ext_list_move(main_list, folio, false);
 }
 
-void mru_folio_evicted(struct folio *folio)
+static void mru_folio_evicted(struct folio *folio)
 {
 	bpf_cache_ext_list_del(folio);
 }
 
-void mru_evict_folios(struct cache_ext_eviction_ctx *eviction_ctx, struct mem_cgroup *memcg)
+static void mru_evict_folios(struct cache_ext_eviction_ctx *eviction_ctx, struct mem_cgroup *memcg)
 {
 	bpf_cache_ext_list_iterate(memcg, main_list, iterate_mru, eviction_ctx);
 }
-
-static const struct cache_policy_backend backend = {
-	.init = mru_init,
-	.evict_folios = mru_evict_folios,
-	.folio_added = mru_folio_added,
-	.folio_accessed = mru_folio_accessed,
-	.folio_evicted = mru_folio_evicted,
-};
 
 /******************************************************************************
  * TinyLFU Implementation *****************************************************
@@ -281,7 +255,7 @@ static inline bool is_folio_relevant(struct folio *folio) {
 s32 BPF_STRUCT_OPS_SLEEPABLE(tinylfu_init, struct mem_cgroup *memcg)
 {
 	bpf_printk("cache_ext: TinyLFU: Initialize TinyLFU\n");
-	return backend.init(memcg);
+	return mru_init(memcg);
 }
 
 void BPF_STRUCT_OPS(
@@ -289,12 +263,12 @@ void BPF_STRUCT_OPS(
 	struct cache_ext_eviction_ctx *eviction_ctx,
 	struct mem_cgroup *memcg
 ) {
-	backend.evict_folios(eviction_ctx, memcg);
+	mru_evict_folios(eviction_ctx, memcg);
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_evicted, struct folio *folio) {
 	bpf_printk("cache_ext: TinyLFU: Evicted Folio %ld\n", folio->mapping->host->i_ino);
-	backend.folio_evicted(folio);
+	mru_folio_evicted(folio);
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
@@ -302,7 +276,7 @@ void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
 		return;
 
 	bpf_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
-	backend.folio_added(folio);
+	mru_folio_added(folio);
 }
 
 
@@ -325,7 +299,7 @@ void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
 		}
 	}
 
-	backend.folio_accessed(folio);
+	mru_folio_accessed(folio);
 }
 
 /*
