@@ -8,6 +8,13 @@
 
 char _license[] SEC("license") = "GPL";
 
+// #define DEBUG
+#ifdef DEBUG
+#define dbg_printk(fmt, ...) bpf_printk(fmt, ##__VA_ARGS__)
+#else
+#define dbg_printk(fmt, ...)
+#endif
+
 // Constants
 #define CHAR_BIT 8
 #define PAGE_SHIFT 12
@@ -204,7 +211,7 @@ static __always_inline u32 tinylfu_estimate(u64 addr) {
  * MRU Backend Implementation *************************************************
  *****************************************************************************/
 
-__u64 main_list;
+__u64 mru_list;
 
 inline bool is_ino_relevant(u64 ino)
 {
@@ -234,7 +241,7 @@ static int iterate_mru(int idx, struct cache_ext_list_node *node)
 	return CACHE_EXT_EVICT_NODE;
 }
 
-s32 BPF_STRUCT_OPS_SLEEPABLE(mru_init, struct mem_cgroup *memcg)
+static int mru_init(struct mem_cgroup *memcg)
 {
 	dbg_printk("cache_ext: Hi from the mru_init hook! :D\n");
 	mru_list = bpf_cache_ext_ds_registry_new_list(memcg);
@@ -246,7 +253,7 @@ s32 BPF_STRUCT_OPS_SLEEPABLE(mru_init, struct mem_cgroup *memcg)
 	return 0;
 }
 
-void BPF_STRUCT_OPS(mru_folio_added, struct folio *folio)
+static void mru_folio_added(struct folio *folio)
 {
 	dbg_printk("cache_ext: Hi from the mru_folio_added hook! :D\n");
 	if (!is_folio_relevant(folio)) {
@@ -261,7 +268,7 @@ void BPF_STRUCT_OPS(mru_folio_added, struct folio *folio)
 	dbg_printk("cache_ext: Added folio to mru_list\n");
 }
 
-void BPF_STRUCT_OPS(mru_folio_accessed, struct folio *folio)
+static void mru_folio_accessed(struct folio *folio)
 {
 	int ret;
 	dbg_printk("cache_ext: Hi from the mru_folio_accessed hook! :D\n");
@@ -279,13 +286,13 @@ void BPF_STRUCT_OPS(mru_folio_accessed, struct folio *folio)
 	dbg_printk("cache_ext: Moved folio to mru_list tail\n");
 }
 
-void BPF_STRUCT_OPS(mru_folio_evicted, struct folio *folio)
+static void mru_folio_evicted(struct folio *folio)
 {
 	dbg_printk("cache_ext: Hi from the mru_folio_evicted hook! :D\n");
 	bpf_cache_ext_list_del(folio);
 }
 
-void BPF_STRUCT_OPS(mru_evict_folios, struct cache_ext_eviction_ctx *eviction_ctx,
+static void mru_evict_folios(struct cache_ext_eviction_ctx *eviction_ctx,
 	       struct mem_cgroup *memcg)
 {
 	dbg_printk("cache_ext: Hi from the mru_evict_folios hook! :D\n");
@@ -317,9 +324,6 @@ void BPF_STRUCT_OPS(
     struct cache_ext_eviction_ctx *eviction_ctx,
     struct mem_cgroup *memcg
 ) {
-    if (!is_folio_relevant(folio)) {
-        return;
-    }
     mru_evict_folios(eviction_ctx, memcg);
 }
 
@@ -335,8 +339,6 @@ void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
     bpf_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
     mru_folio_added(folio);
 }
-
-
 
 void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
     if (!is_folio_relevant(folio))
@@ -375,10 +377,8 @@ bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *adm
     }
 
     u64 new_id = FOLIO_ID(admission_ctx->ino, admission_ctx->offset);
-    u64 victim_id = admission_ctx->victim_id;
+    u64 victim_id = admission_ctx->victim_ino;
 
-    // TODO: check for is_folio_relevant
-    
     bpf_printk("cache_ext: TinyLFU: Admission: New %llu vs Victim %llu\n", new_id, victim_id);
 
     if (victim_id == 0) {
