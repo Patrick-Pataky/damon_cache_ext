@@ -1,5 +1,5 @@
 diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
-index 3086502ac..c550c3409 100644
+index 3086502ac..426abad79 100644
 --- a/include/linux/mm_types.h
 +++ b/include/linux/mm_types.h
 @@ -1389,6 +1389,12 @@ struct cache_ext_admission_ctx {
@@ -15,22 +15,43 @@ index 3086502ac..c550c3409 100644
  };
  
  // TODO: How can I make only some fields cache_ext_eviction_ctx writeable?
+@@ -1400,6 +1406,7 @@ struct cache_ext_ops {
+ 	void (*folio_accessed)(struct folio *folio);
+ 	void (*folio_evicted)(struct folio *folio);
+ 	bool (*admit_folio)(struct cache_ext_admission_ctx *ctx);
++	bool (*filter_inode)(u64 ino);
+ 	// TODO: Add name?
+ };
+ 
 diff --git a/mm/filemap.c b/mm/filemap.c
-index b84763395..995711d5a 100644
+index b84763395..a555b871e 100644
 --- a/mm/filemap.c
 +++ b/mm/filemap.c
-@@ -2658,7 +2658,23 @@ static int filemap_get_pages(struct kiocb *iocb, size_t count,
+@@ -2653,15 +2653,41 @@ static int filemap_get_pages(struct kiocb *iocb, size_t count,
+ 
+ 		memcg = mem_cgroup_from_task(current);
+ 		cache_ext_ops = get_cache_ext_ops(memcg);
++		if (cache_ext_ops && cache_ext_ops->filter_inode) {
++			if (!cache_ext_ops->filter_inode(filp->f_inode->i_ino)) {
++				// If the inode is not relevant, do not admit
++				ret = true;
++				goto out_cache_ext;
++			}
++		}
++
+ 		if (cache_ext_ops && cache_ext_ops->admit_folio) {
+ 			struct cache_ext_admission_ctx ctx = {
  				.ino = filp->f_inode->i_ino,
  				.offset = iocb->ki_pos,
  				.size = count,
 +				.victim_ino = 0,
 +				.victim_page_offset = 0,
- 			};
++			};
 +
 +			/* Get a victim candidate to compare against */
 +			struct cache_ext_eviction_ctx evict_ctx = {
 +				.request_nr_folios_to_evict = 1,
-+			};
+ 			};
 +			if (cache_ext_ops->evict_folios) {
 +				cache_ext_ops->evict_folios(&evict_ctx, memcg);
 +				if (evict_ctx.nr_folios_to_evict > 0) {
@@ -43,3 +64,8 @@ index b84763395..995711d5a 100644
  			ret = cache_ext_ops->admit_folio(&ctx);
  		}
  
++out_cache_ext:
++
+ 		rcu_read_unlock();
+ 
+ 		/* Admission hook decided not to add to page cache */
