@@ -55,21 +55,19 @@ index cde0fca84..920f716b8 100644
  
  	// Get the global list lock
 diff --git a/mm/filemap.c b/mm/filemap.c
-index b84763395..9ff041a8f 100644
+index b84763395..af27883d2 100644
 --- a/mm/filemap.c
 +++ b/mm/filemap.c
-@@ -2595,28 +2595,42 @@ static int __cache_ext_dio(struct file *file, struct address_space *mapping,
+@@ -2595,28 +2595,32 @@ static int __cache_ext_dio(struct file *file, struct address_space *mapping,
  	for (size_t i = index; i < last_index; ++i) {
  		folio = filemap_alloc_folio(mapping_gfp_mask(mapping), 0);
  		if (!folio) {
 -			if (i == index)
 +			if (i == index) {
-+				// printk(KERN_WARNING "[__cache_ext_dio] i==index, filemap_alloc_folio failed\n");
  				return -ENOMEM;
+-			// We added some folios that we want to copy and then
+-			// free, so this could fix our OOM
 +			}
- 			// We added some folios that we want to copy and then
- 			// free, so this could fix our OOM
-+			// printk(KERN_WARNING "[__cache_ext_dio] i>index, filemap_alloc_folio\n");
  			return 1;
  		}
  
@@ -77,8 +75,6 @@ index b84763395..9ff041a8f 100644
  		__folio_set_locked(folio);
  
 -		folio_ref_add(folio, folio_nr_pages(folio));
-+		// folio_ref_add(folio, folio_nr_pages(folio));
-+
  		folio->mapping = mapping;
  		folio->index = i;
  		error = filemap_read_folio_cache_ext(
@@ -89,22 +85,18 @@ index b84763395..9ff041a8f 100644
 +			folio->mapping = NULL;
 +			folio_put(folio);
 +			if (i == index) {
-+				// printk(KERN_WARNING "[__cache_ext_dio] i==index, filemap_read_folio_cache_ext\n");
  				return error;
 +			}
 +
-+			// printk(KERN_WARNING "[__cache_ext_dio] i>index, filemap_read_folio_cache_ext\n");
  			return 1;
  		}
  
-+		// folio->mapping = NULL;
-+		// printk(KERN_WARNING "[__cache_ext_dio] folio=%lu, folio.ref_count==%d\n", folio, folio_ref_count(folio));
 +		folio->mapping = NULL;
 +
  		// Don't overflow fbatch
  		if (!folio_batch_add(fbatch, folio))
  			break;
-@@ -2653,15 +2667,41 @@ static int filemap_get_pages(struct kiocb *iocb, size_t count,
+@@ -2653,15 +2657,41 @@ static int filemap_get_pages(struct kiocb *iocb, size_t count,
  
  		memcg = mem_cgroup_from_task(current);
  		cache_ext_ops = get_cache_ext_ops(memcg);
@@ -123,12 +115,12 @@ index b84763395..9ff041a8f 100644
  				.size = count,
 +				.victim_ino = 0,
 +				.victim_page_offset = 0,
- 			};
++			};
 +
 +			/* Get a victim candidate to compare against */
 +			struct cache_ext_eviction_ctx evict_ctx = {
 +				.request_nr_folios_to_evict = 1,
-+			};
+ 			};
 +			if (cache_ext_ops->evict_folios) {
 +				cache_ext_ops->evict_folios(&evict_ctx, memcg);
 +				if (evict_ctx.nr_folios_to_evict > 0) {
@@ -146,24 +138,22 @@ index b84763395..9ff041a8f 100644
  		rcu_read_unlock();
  
  		/* Admission hook decided not to add to page cache */
-@@ -2767,10 +2807,14 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
+@@ -2767,10 +2797,12 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
  			break;
  
  		error = filemap_get_pages(iocb, iter->count, &fbatch, false);
 -		if (error < 0)
 +		if (error < 0) {
-+			// printk(KERN_WARNING "[filemap_read] filemap_get_pages.error=%d\n", error);
  			break;
 -		else if (error == 1)
 +		}
 +		else if (error == 1) {
-+			// printk(KERN_WARNING "[filemap_read] filemap_get_pages.error=%d\n", error);
  			cache_ext_flag = 1;
 +		}
  
  		/*
  		 * i_size must be checked after we know the pages are Uptodate.
-@@ -2797,10 +2841,12 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
+@@ -2797,7 +2829,8 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
  		 */
  		if (!pos_same_folio(iocb->ki_pos, last_pos - 1,
  				    fbatch.folios[0]))
@@ -173,50 +163,42 @@ index b84763395..9ff041a8f 100644
  
  		for (i = 0; i < folio_batch_count(&fbatch); i++) {
  			struct folio *folio = fbatch.folios[i];
-+			// printk(KERN_WARNING "[filemap_read] folio=%lu\n", folio);
- 			size_t fsize = folio_size(folio);
- 			size_t offset = iocb->ki_pos & (fsize - 1);
- 			size_t bytes = min_t(loff_t, end_offset - iocb->ki_pos,
-@@ -2828,18 +2874,24 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
- 			last_pos = iocb->ki_pos;
+@@ -2816,8 +2849,6 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
+ 			 * virtual addresses, take care of potential aliasing
+ 			 * before reading the folio on the kernel side.
+ 			 */
+-
+-			// TODO: investigate
+ 			if (writably_mapped)
+ 				flush_dcache_folio(folio);
  
- 			if (copied < bytes) {
-+				// printk(KERN_WARNING "[filemap_read] copied < bytes\n");
+@@ -2831,15 +2862,11 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
  				error = -EFAULT;
  				break;
  			}
- 
- 			// TODO: drop reference count before freeing?
+-
+-			// TODO: drop reference count before freeing?
 -			if (cache_ext_flag)
 -				filemap_free_folio(mapping, folio);
-+			// if (cache_ext_flag) {
-+			// 	folio_set_count(folio, 1);
-+			// 	printk(KERN_WARNING "[filemap_read] 1. freeing %lu (ref_count=%d)\n", folio, folio_ref_count(folio));
-+			// 	filemap_free_folio(mapping, folio);
-+			// }
  		}
  put_folios:
 -		if (!cache_ext_flag)
 -			for (i = 0; i < folio_batch_count(&fbatch); i++)
-+		// if (!cache_ext_flag)
-+			for (i = 0; i < folio_batch_count(&fbatch); i++) {
-+				// printk(KERN_WARNING "[filemap_read] 2. freeing %lu (ref_count=%d)\n", fbatch.folios[i], folio_ref_count(fbatch.folios[i]));
- 				folio_put(fbatch.folios[i]);
-+			}
+-				folio_put(fbatch.folios[i]);
++		for (i = 0; i < folio_batch_count(&fbatch); i++) {
++			folio_put(fbatch.folios[i]);
++		}
  
  		cache_ext_flag = 0;
  		folio_batch_init(&fbatch);
-@@ -3044,9 +3096,14 @@ ssize_t filemap_splice_read(struct file *in, loff_t *ppos,
+@@ -3044,9 +3071,11 @@ ssize_t filemap_splice_read(struct file *in, loff_t *ppos,
  			break;
  
  		iocb.ki_pos = *ppos;
 +
-+		printk(KERN_WARNING "[filemap_splice_read] filemap_get_pages\n");
-+
  		error = filemap_get_pages(&iocb, len, &fbatch, true);
 -		if (error < 0)
 +		if (error < 0) {
-+			printk(KERN_WARNING "[filemap_splice_read] error=%d\n", error);
  			break;
 +		}
  
