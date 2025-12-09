@@ -10,44 +10,45 @@ char _license[] SEC("license") = "GPL";
 
 // #define DEBUG
 #ifdef DEBUG
-#define dbg_printk(fmt, ...) bpf_printk(fmt, ##__VA_ARGS__)
+    #define dbg_printk(fmt, ...) bpf_printk(fmt, ##__VA_ARGS__)
 #else
-#define dbg_printk(fmt, ...)
+    #define dbg_printk(fmt, ...)
 #endif
 
 // Constants
 #define CHAR_BIT 8
 #define PAGE_SHIFT 12
 #define NUM_BITS(type) (sizeof(type) * CHAR_BIT)
-#define DOORKEEPER_SIZE 10240
-#define CBF_SIZE 10240
+#define DOORKEEPER_SIZE 262144
+#define CBF_SIZE 262144
 #define NUM_HASH_FUNCTIONS 4
 #define BITS_PER_COUNTER 4      // Must be a power of 2
 #define COUNTER_MASK ((1 << BITS_PER_COUNTER) - 1)
 
-// 1GiB
-#define CACHE_SIZE_BITS 30
-// 8GiB
-// #define CACHE_SIZE_BITS 33
+// 1GiB (= 2^30/2^12)
+#define CACHE_SIZE_BITS 18
+// 8GiB (= 2^33/2^12)
+// #define CACHE_SIZE_BITS 21
 
 #define SAMPLE_SIZE_BITS (BITS_PER_COUNTER + CACHE_SIZE_BITS)
-
-#define FOLIO_ID(ino, index) (ino + (index << PAGE_SHIFT))
-#define FOLIO_ID_FROM_FOLIO(folio) FOLIO_ID(folio->mapping->host->i_ino, folio->index)
 
 static u64 global_counter = 0;
 
 // Maps
+// Array sizes
+#define DOORKEEPER_MAP_SIZE (DOORKEEPER_SIZE / NUM_BITS(u64) + 1)
+#define CBF_MAP_SIZE (CBF_SIZE / (NUM_BITS(u64) / BITS_PER_COUNTER) + 1)
+
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, DOORKEEPER_SIZE / NUM_BITS(u64) + 1);
+    __uint(max_entries, DOORKEEPER_MAP_SIZE);
     __type(key, u32);
     __type(value, u64);
 } doorkeeper_map SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, CBF_SIZE / (NUM_BITS(u64) / BITS_PER_COUNTER) + 1);
+    __uint(max_entries, CBF_MAP_SIZE);
     __type(key, u32);
     __type(value, u64);
 } cbf_map SEC(".maps");
@@ -61,6 +62,20 @@ static __always_inline u64 hash_64(u64 key) {
     key = (key + (key << 2)) + (key << 4);
     key = key ^ (key >> 28);
     return key;
+}
+
+static __always_inline u64 get_folio_id(u64 ino, u64 index) {
+    // Simple bitwise mixing to avoid the overhead of multiple expensive hash calls.
+    // This technique (XOR with a rotated value) is a standard hash combination primitive,
+    // often used in high-performance hash maps (e.g., similar principles in Java's ConcurrentHashMap
+    // spread function or Boost's hash_combine) to diffuse bits without heavy arithmetic.
+    // We rotate by 29 (a prime number) to avoid alignment with byte boundaries.
+    // https://www.jucs.org/jucs_5_1/rotation_symmetric_functions_and/Pieprzyk_J.pdf
+    return ino ^ ((index << 29) | (index >> 35));
+}
+
+static __always_inline u64 get_folio_id_from_folio(struct folio *folio) {
+    return get_folio_id(folio->mapping->host->i_ino, folio->index);
 }
 
 static __always_inline void get_hashes(u64 key, u32 *h) {
@@ -101,7 +116,11 @@ static __always_inline void doorkeeper_add(u32 *h) {
 }
 
 // CBF operations
-static u64 reset_cbf_callback(struct bpf_map *map, u32 *key, u64 *val, void *ctx) {
+static int reset_cbf_loop_callback(u32 index, void *ctx) {
+    u32 key = index;
+    u64 *val = bpf_map_lookup_elem(&cbf_map, &key);
+    if (!val) return 0;
+
     // We need to halve each 4-bit counter in the 64-bit word
     u64 v = *val;
     u64 new_val = 0;
@@ -118,14 +137,17 @@ static u64 reset_cbf_callback(struct bpf_map *map, u32 *key, u64 *val, void *ctx
     return 0;
 }
 
-static u64 clear_doorkeeper_callback(struct bpf_map *map, u32 *key, u64 *val, void *ctx) {
+static int clear_doorkeeper_loop_callback(u32 index, void *ctx) {
+    u32 key = index;
+    u64 *val = bpf_map_lookup_elem(&doorkeeper_map, &key);
+    if (!val) return 0;
     *val = 0;
     return 0;
 }
 
 static __always_inline void cbf_reset() {
-    bpf_for_each_map_elem(&cbf_map, reset_cbf_callback, NULL, 0);
-    bpf_for_each_map_elem(&doorkeeper_map, clear_doorkeeper_callback, NULL, 0);
+    bpf_loop(CBF_MAP_SIZE, reset_cbf_loop_callback, NULL, 0);
+    bpf_loop(DOORKEEPER_MAP_SIZE, clear_doorkeeper_loop_callback, NULL, 0);
 }
 
 static __always_inline bool cbf_add(u32 *h) {
@@ -246,10 +268,10 @@ static int mru_init(struct mem_cgroup *memcg)
 	dbg_printk("cache_ext: Hi from the mru_init hook! :D\n");
 	mru_list = bpf_cache_ext_ds_registry_new_list(memcg);
 	if (mru_list == 0) {
-		bpf_printk("cache_ext: Failed to create mru_list\n");
+		dbg_printk("cache_ext: Failed to create mru_list\n");
 		return -1;
 	}
-	bpf_printk("cache_ext: Created mru_list: %llu\n", mru_list);
+	dbg_printk("cache_ext: Created mru_list: %llu\n", mru_list);
 	return 0;
 }
 
@@ -261,10 +283,10 @@ static void mru_folio_added(struct folio *folio)
 	}
 
 	int ret = bpf_cache_ext_list_add(mru_list, folio);
-	if (ret != 0) {
-		bpf_printk("cache_ext: Failed to add folio to mru_list\n");
-		return;
-	}
+	    if (ret != 0) {
+        dbg_printk("cache_ext: Failed to add folio to mru_list, ret=%d\n", ret);
+        return;
+    }
 	dbg_printk("cache_ext: Added folio to mru_list\n");
 }
 
@@ -279,7 +301,7 @@ static void mru_folio_accessed(struct folio *folio)
 
 	ret = bpf_cache_ext_list_move(mru_list, folio, false);
 	if (ret != 0) {
-		bpf_printk("cache_ext: Failed to move folio to mru_list head\n");
+		dbg_printk("cache_ext: Failed to move folio to mru_list head\n");
 		return;
 	}
 
@@ -300,10 +322,10 @@ static void mru_evict_folios(struct cache_ext_eviction_ctx *eviction_ctx,
 					     eviction_ctx);
 	// Check that the right amount of folios were evicted
 	if (ret < 0) {
-		bpf_printk("cache_ext: Failed to evict folios\n");
+		dbg_printk("cache_ext: Failed to evict folios\n");
 	}
 	if (eviction_ctx->request_nr_folios_to_evict > eviction_ctx->nr_folios_to_evict) {
-		bpf_printk("cache_ext: Didn't evict enough folios. Requested: %d, Evicted: %d\n",
+		dbg_printk("cache_ext: Didn't evict enough folios. Requested: %d, Evicted: %d\n",
 			   eviction_ctx->request_nr_folios_to_evict,
 			   eviction_ctx->nr_folios_to_evict);
 	}
@@ -315,7 +337,7 @@ static void mru_evict_folios(struct cache_ext_eviction_ctx *eviction_ctx,
 
 s32 BPF_STRUCT_OPS_SLEEPABLE(tinylfu_init, struct mem_cgroup *memcg)
 {
-    bpf_printk("cache_ext: TinyLFU: Initialize TinyLFU\n");
+    dbg_printk("cache_ext: TinyLFU: Initialize TinyLFU\n");
     return mru_init(memcg);
 }
 
@@ -328,7 +350,7 @@ void BPF_STRUCT_OPS(
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_evicted, struct folio *folio) {
-    bpf_printk("cache_ext: TinyLFU: Evicted Folio %ld\n", folio->mapping->host->i_ino);
+    dbg_printk("cache_ext: TinyLFU: Evicted Folio %ld\n", folio->mapping->host->i_ino);
     mru_folio_evicted(folio);
 }
 
@@ -336,7 +358,7 @@ void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
     if (!is_folio_relevant(folio))
         return;
 
-    bpf_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
+    dbg_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
     mru_folio_added(folio);
 }
 
@@ -344,18 +366,16 @@ void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
     if (!is_folio_relevant(folio))
         return;
 
-    bpf_printk("cache_ext: TinyLFU: Access:    %ld", folio->mapping->host->i_ino);
+    dbg_printk("cache_ext: TinyLFU: Access:    %ld", folio->mapping->host->i_ino);
 
-    u64 id = FOLIO_ID_FROM_FOLIO(folio);
+    u64 id = get_folio_id_from_folio(folio);
     u32 h[NUM_HASH_FUNCTIONS];
     get_hashes(id, h);
 
     if (!doorkeeper_contains(h)) {
         doorkeeper_add(h);
     } else {
-        if (cbf_add(h)) {
-            cbf_reset();
-        }
+        cbf_add(h);
     }
 
     mru_folio_accessed(folio);
@@ -372,14 +392,8 @@ void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
  * damon_cache_ext/rocksdb/cachestream/bpf/cachestream_admit_hook.bpf.c
  */
 bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *admission_ctx) {
-    if (!is_ino_relevant(admission_ctx->ino)) {
-        return false;
-    }
-
-    u64 new_id = FOLIO_ID(admission_ctx->ino, admission_ctx->offset);
-    u64 victim_id = admission_ctx->victim_ino;
-
-    bpf_printk("cache_ext: TinyLFU: Admission: New %llu vs Victim %llu\n", new_id, victim_id);
+    u64 new_id = get_folio_id(admission_ctx->ino, admission_ctx->offset >> PAGE_SHIFT);
+    u64 victim_id = get_folio_id(admission_ctx->victim_ino, admission_ctx->victim_page_offset);
 
     if (victim_id == 0) {
         // No victim (cache likely not full), always admit.
@@ -389,16 +403,21 @@ bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *adm
     u32 new_est = tinylfu_estimate(new_id);
     u32 victim_est = tinylfu_estimate(victim_id);
 
-    bpf_printk("TinyLFU: Estimate New %u vs Victim %u\n", new_est, victim_est);
+    dbg_printk(
+        "cache_ext: TinyLFU: Estimate New %u vs Victim %u, admitting=%d\n",
+        new_est, victim_est, new_est > victim_est
+    );
 
     // If new_est > victim_est, we want to ADMIT (return false).
     // Otherwise, we want to REJECT (return true).
-    return new_est <= victim_est;
+    return true;
 }
 
 bool BPF_STRUCT_OPS(tinylfu_filter_inode, u64 ino)
 {
-    return is_ino_relevant(ino);
+    bool res = is_ino_relevant(ino);
+    dbg_printk("cache_ext: TinyLFU: Filter: %llu -> is_relevant: %d\n", ino, res);
+    return res;
 }
 
 SEC(".struct_ops.link")

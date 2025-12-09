@@ -154,9 +154,11 @@ int main(int argc, char **argv) {
 		goto cleanup;
 	}
 
-	// Wait for keyboard input
-	printf("Press any key to exit...\n");
-	getchar();
+	// Wait for signal (SIGINT)
+	printf("Running... Press Ctrl-C to exit.\n");
+	while (!exiting) {
+		pause();
+	}
 	ret = 0;
 
 cleanup:
