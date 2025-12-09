@@ -23,18 +23,93 @@ index 3086502ac..426abad79 100644
  	// TODO: Add name?
  };
  
+diff --git a/mm/cache_ext_ds.c b/mm/cache_ext_ds.c
+index cde0fca84..920f716b8 100644
+--- a/mm/cache_ext_ds.c
++++ b/mm/cache_ext_ds.c
+@@ -66,7 +66,7 @@ int __cache_ext_list_add_impl(struct cache_ext_list *list, struct folio *folio,
+ 	struct valid_folio *valid_folio = valid_folios_lookup(folio);
+ 	if (!valid_folio) {
+ 		spin_unlock(bucket_lock);
+-		return -1;
++		return -2;
+ 	}
+ 
+ 	// TODO: Make sure the cache_ext_list still exists.
+@@ -79,7 +79,7 @@ int __cache_ext_list_add_impl(struct cache_ext_list *list, struct folio *folio,
+ 	if (!list_empty(&node->node)) {
+ 		cache_ext_ds_registry_write_unlock(folio);
+ 		spin_unlock(bucket_lock);
+-		return -1;
++		return -3;
+ 	}
+ 
+ 	if (tail)
+@@ -111,7 +111,7 @@ int cache_ext_list_move(struct cache_ext_list *list, struct folio *folio,
+ 	struct valid_folio *valid_folio = valid_folios_lookup(folio);
+ 	if (!valid_folio) {
+ 		spin_unlock(bucket_lock);
+-		return -1;
++		return -2;
+ 	}
+ 
+ 	// Get the global list lock
 diff --git a/mm/filemap.c b/mm/filemap.c
-index b84763395..a555b871e 100644
+index b84763395..1b13fb182 100644
 --- a/mm/filemap.c
 +++ b/mm/filemap.c
-@@ -2653,15 +2653,41 @@ static int filemap_get_pages(struct kiocb *iocb, size_t count,
+@@ -2595,10 +2595,13 @@ static int __cache_ext_dio(struct file *file, struct address_space *mapping,
+ 	for (size_t i = index; i < last_index; ++i) {
+ 		folio = filemap_alloc_folio(mapping_gfp_mask(mapping), 0);
+ 		if (!folio) {
+-			if (i == index)
++			if (i == index) {
++				printk(KERN_WARNING "[__cache_ext_dio] i==index, filemap_alloc_folio failed\n");
+ 				return -ENOMEM;
++			}
+ 			// We added some folios that we want to copy and then
+ 			// free, so this could fix our OOM
++			printk(KERN_WARNING "[__cache_ext_dio] i>index, filemap_alloc_folio\n");
+ 			return 1;
+ 		}
+ 
+@@ -2606,17 +2609,27 @@ static int __cache_ext_dio(struct file *file, struct address_space *mapping,
+ 		__folio_set_locked(folio);
+ 
+ 		folio_ref_add(folio, folio_nr_pages(folio));
++
+ 		folio->mapping = mapping;
+ 		folio->index = i;
+ 		error = filemap_read_folio_cache_ext(
+ 			file, mapping->a_ops->read_folio, folio);
+ 		filemap_invalidate_unlock_shared(mapping);
+ 		if (error) {
+-			if (i == index)
++			// folio->mapping = NULL;
++			// folio_put(folio);
++			if (i == index) {
++				printk(KERN_WARNING "[__cache_ext_dio] i==index, filemap_read_folio_cache_ext\n");
+ 				return error;
++			}
++
++			printk(KERN_WARNING "[__cache_ext_dio] i>index, filemap_read_folio_cache_ext\n");
+ 			return 1;
+ 		}
+ 
++		// folio->mapping = NULL;
++		printk(KERN_WARNING "[__cache_ext_dio] folio=%lu, folio.ref_count==%d\n", folio, folio_ref_count(folio));
++
+ 		// Don't overflow fbatch
+ 		if (!folio_batch_add(fbatch, folio))
+ 			break;
+@@ -2653,15 +2666,41 @@ static int filemap_get_pages(struct kiocb *iocb, size_t count,
  
  		memcg = mem_cgroup_from_task(current);
  		cache_ext_ops = get_cache_ext_ops(memcg);
 +		if (cache_ext_ops && cache_ext_ops->filter_inode) {
 +			if (!cache_ext_ops->filter_inode(filp->f_inode->i_ino)) {
-+				// If the inode is not relevant, do not admit
-+				ret = true;
++				// If the inode is not relevant, admit it
++				ret = false;
 +				goto out_cache_ext;
 +			}
 +		}
@@ -46,20 +121,20 @@ index b84763395..a555b871e 100644
  				.size = count,
 +				.victim_ino = 0,
 +				.victim_page_offset = 0,
-+			};
+ 			};
 +
 +			/* Get a victim candidate to compare against */
-+			struct cache_ext_eviction_ctx evict_ctx = {
-+				.request_nr_folios_to_evict = 1,
- 			};
-+			if (cache_ext_ops->evict_folios) {
-+				cache_ext_ops->evict_folios(&evict_ctx, memcg);
-+				if (evict_ctx.nr_folios_to_evict > 0) {
-+					struct folio *victim = evict_ctx.folios_to_evict[0];
-+					ctx.victim_ino = victim->mapping->host->i_ino;
-+					ctx.victim_page_offset = victim->index;
-+				}
-+			}
++			// struct cache_ext_eviction_ctx evict_ctx = {
++			// 	.request_nr_folios_to_evict = 1,
++			// };
++			// if (cache_ext_ops->evict_folios) {
++			// 	cache_ext_ops->evict_folios(&evict_ctx, memcg);
++			// 	if (evict_ctx.nr_folios_to_evict > 0) {
++			// 		struct folio *victim = evict_ctx.folios_to_evict[0];
++			// 		ctx.victim_ino = victim->mapping->host->i_ino;
++			// 		ctx.victim_page_offset = victim->index;
++			// 	}
++			// }
 +
  			ret = cache_ext_ops->admit_folio(&ctx);
  		}
@@ -69,3 +144,74 @@ index b84763395..a555b871e 100644
  		rcu_read_unlock();
  
  		/* Admission hook decided not to add to page cache */
+@@ -2766,11 +2805,17 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
+ 		if (unlikely(iocb->ki_pos >= i_size_read(inode)))
+ 			break;
+ 
++		printk(KERN_WARNING "[filemap_read] filemap_get_pages\n");
++
+ 		error = filemap_get_pages(iocb, iter->count, &fbatch, false);
+-		if (error < 0)
++		if (error < 0) {
++			printk(KERN_WARNING "[filemap_read] filemap_get_pages.error=%d\n", error);
+ 			break;
+-		else if (error == 1)
++		}
++		else if (error == 1) {
++			printk(KERN_WARNING "[filemap_read] filemap_get_pages.error=%d\n", error);
+ 			cache_ext_flag = 1;
++		}
+ 
+ 		/*
+ 		 * i_size must be checked after we know the pages are Uptodate.
+@@ -2801,6 +2846,7 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
+ 
+ 		for (i = 0; i < folio_batch_count(&fbatch); i++) {
+ 			struct folio *folio = fbatch.folios[i];
++			printk(KERN_WARNING "[filemap_read] folio=%lu\n", folio);
+ 			size_t fsize = folio_size(folio);
+ 			size_t offset = iocb->ki_pos & (fsize - 1);
+ 			size_t bytes = min_t(loff_t, end_offset - iocb->ki_pos,
+@@ -2828,18 +2874,24 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
+ 			last_pos = iocb->ki_pos;
+ 
+ 			if (copied < bytes) {
++				printk(KERN_WARNING "[filemap_read] copied < bytes\n");
+ 				error = -EFAULT;
+ 				break;
+ 			}
+ 
+ 			// TODO: drop reference count before freeing?
+-			if (cache_ext_flag)
++			if (cache_ext_flag) {
++				folio_set_count(folio, 1);
++				printk(KERN_WARNING "[filemap_read] 1. freeing %lu (ref_count=%d)\n", folio, folio_ref_count(folio));
+ 				filemap_free_folio(mapping, folio);
++			}
+ 		}
+ put_folios:
+ 		if (!cache_ext_flag)
+-			for (i = 0; i < folio_batch_count(&fbatch); i++)
++			for (i = 0; i < folio_batch_count(&fbatch); i++) {
++				printk(KERN_WARNING "[filemap_read] 2. freeing %lu (ref_count=%d)\n", fbatch.folios[i], folio_ref_count(fbatch.folios[i]));
+ 				folio_put(fbatch.folios[i]);
++			}
+ 
+ 		cache_ext_flag = 0;
+ 		folio_batch_init(&fbatch);
+@@ -3044,9 +3096,14 @@ ssize_t filemap_splice_read(struct file *in, loff_t *ppos,
+ 			break;
+ 
+ 		iocb.ki_pos = *ppos;
++
++		printk(KERN_WARNING "[filemap_splice_read] filemap_get_pages\n");
++
+ 		error = filemap_get_pages(&iocb, len, &fbatch, true);
+-		if (error < 0)
++		if (error < 0) {
++			printk(KERN_WARNING "[filemap_splice_read] error=%d\n", error);
+ 			break;
++		}
+ 
+ 		/*
+ 		 * i_size must be checked after we know the pages are Uptodate.
