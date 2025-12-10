@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CACHE_EXT_CGROUP = "cache_ext_test"
 DEFAULT_BASELINE_CGROUP = "baseline_test"
+DEFAULT_DAMON_CGROUP = "damon_test"
 
 
 class CacheExtPolicy:
@@ -70,7 +71,7 @@ class CacheExtPolicy:
     def stop(self):
         if not self.has_started:
             raise Exception("Policy not started")
-        cmd = ["sudo", "kill", "-2", str(self._policy_thread.pid)]
+       	cmd = ["sudo", "kill", "-2", str(self._policy_thread.pid)]
         run(cmd)
         out, err = self._policy_thread.communicate()
         with suppress(subprocess.CalledProcessError):
@@ -223,6 +224,15 @@ def enable_cache_ext_for_cgroup(cgroup=DEFAULT_CACHE_EXT_CGROUP):
 
 def delete_cgroup(cgroup):
     with suppress(subprocess.CalledProcessError):
+        run(
+            [
+                "sudo",
+                "sh",
+                "-c",
+                "echo N > /sys/module/damon_reclaim/parameters/enabled",
+            ]
+        )
+    with suppress(subprocess.CalledProcessError):
         run(["sudo", "cgdelete", f"memory:{cgroup}"])
 
 
@@ -260,6 +270,30 @@ def recreate_baseline_cgroup(cgroup=DEFAULT_BASELINE_CGROUP, limit_in_bytes=2 * 
             "sh",
             "-c",
             "echo %d > /sys/fs/cgroup/%s/memory.max" % (limit_in_bytes, cgroup),
+        ]
+    )
+
+def recreate_damon_cgroup(cgroup=DEFAULT_DAMON_CGROUP, limit_in_bytes=2 * GiB):
+    delete_cgroup(cgroup)
+    # Create baseline cgroup
+    run(["sudo", "cgcreate", "-g", f"memory:{cgroup}"])
+
+    # Set memory limit for baseline cgroup
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "echo %d > /sys/fs/cgroup/%s/memory.max" % (limit_in_bytes, cgroup),
+        ]
+    )
+
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "echo Y > /sys/module/damon_reclaim/parameters/enabled",
         ]
     )
 
