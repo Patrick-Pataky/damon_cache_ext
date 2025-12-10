@@ -113,7 +113,7 @@ class FioBenchmark(BenchmarkFramework):
         else:
             configs = add_config_option(
                 "cgroup_name",
-                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP],
+                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP, DEFAULT_DAMON_CGROUP],
                 configs,
             )
 
@@ -139,6 +139,8 @@ class FioBenchmark(BenchmarkFramework):
                 self.cache_ext_policy.start(cgroup_size=config["cgroup_size"])
             elif policy_loader_name:
                 self.cache_ext_policy.start()
+        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+            recreate_damon_cgroup(limit_in_bytes=config["cgroup_size"])
         else:
             recreate_baseline_cgroup(limit_in_bytes=config["cgroup_size"])
 
@@ -177,6 +179,8 @@ class FioBenchmark(BenchmarkFramework):
             and self.cache_ext_policy.loader_path
         ):
             self.cache_ext_policy.stop()
+        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+            damon_reclaim_cleanup()
         log.info("Deleting cgroup %s", config["cgroup_name"])
         delete_cgroup(config["cgroup_name"])
         enable_smt()

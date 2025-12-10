@@ -52,7 +52,7 @@ class FileSearchBenchmark(BenchmarkFramework):
         else:
             configs = add_config_option(
                 "cgroup_name",
-                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP],
+                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP, DEFAULT_DAMON_CGROUP],
                 configs,
             )
 
@@ -69,6 +69,8 @@ class FileSearchBenchmark(BenchmarkFramework):
         if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
             recreate_cache_ext_cgroup(limit_in_bytes=config["cgroup_size"])
             self.cache_ext_policy.start()
+        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+            recreate_damon_cgroup(limit_in_bytes=config["cgroup_size"])
         else:
             recreate_baseline_cgroup(limit_in_bytes=config["cgroup_size"])
         self.start_time = time()
@@ -94,6 +96,8 @@ class FileSearchBenchmark(BenchmarkFramework):
         self.end_time = time()
         if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
             self.cache_ext_policy.stop()
+        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+            damon_reclaim_cleanup()
         enable_smt()
 
     def parse_results(self, stdout: str) -> BenchResults:

@@ -297,6 +297,25 @@ def recreate_damon_cgroup(cgroup=DEFAULT_DAMON_CGROUP, limit_in_bytes=2 * GiB):
         ]
     )
 
+def damon_reclaim_cleanup():
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "echo N > /sys/module/damon_reclaim/parameters/enabled",
+        ]
+    )
+
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "sudo damo reclaim", # Print reclaim stats before stopping, must store them somewhere
+        ]
+    )
+
 
 def drop_page_cache():
     run(["sudo", "sync"])

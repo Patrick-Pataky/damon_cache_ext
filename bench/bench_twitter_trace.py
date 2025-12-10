@@ -14,6 +14,8 @@ from bench_lib import (
     BenchResults,
     DEFAULT_BASELINE_CGROUP,
     DEFAULT_CACHE_EXT_CGROUP,
+    DEFAULT_DAMON_CGROUP,
+    damon_reclaim_cleanup,
     add_config_option,
     check_output,
     disable_smt,
@@ -25,6 +27,7 @@ from bench_lib import (
     parse_strings_string,
     recreate_baseline_cgroup,
     recreate_cache_ext_cgroup,
+    recreate_damon_cgroup,
     run,
     set_sysctl,
 )
@@ -213,7 +216,7 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
         else:
             configs = add_config_option(
                 "cgroup_name",
-                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP],
+                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP, DEFAULT_DAMON_CGROUP],
                 configs,
             )
 
@@ -274,6 +277,8 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
                 self.cache_ext_policy.start(cgroup_size=cgroup_size)
             else:
                 self.cache_ext_policy.start()
+        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+            recreate_damon_cgroup(limit_in_bytes=cgroup_size)
         else:
             recreate_baseline_cgroup(limit_in_bytes=cgroup_size)
 
@@ -323,6 +328,11 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
             and "mixed_get_scan" in config["benchmark"]
         ):
             extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
+        if (
+            config["cgroup_name"] == DEFAULT_DAMON_CGROUP
+            and "mixed_get_scan" in config["benchmark"]
+        ):
+            extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
         if config["enable_mmap"]:
             extra_envs["LEVELDB_MAX_MMAPS"] = "10000"
         return extra_envs
@@ -330,6 +340,8 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
     def after_benchmark(self, config):
         if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
             self.cache_ext_policy.stop()
+        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+            damon_reclaim_cleanup()
         sleep(2)
         enable_smt()
 
