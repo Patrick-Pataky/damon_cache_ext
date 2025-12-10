@@ -22,7 +22,7 @@ mkdir -p "$RESULTS_PATH"
 
 pushd "$POLICY_PATH"
 make clean
-make CACHE_SIZE_BITS=18
+make CACHE_SIZE_BITS=21
 popd
 
 # Build correct My-YCSB version (leveldb-scan branch)

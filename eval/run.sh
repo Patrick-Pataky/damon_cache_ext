@@ -5,7 +5,7 @@
 set -euo pipefail
 
 BENCHMARKS=(
-    "cpu-overhead"
+    #"cpu-overhead"
     "filesearch"
     "get-scan"
     "isolation"

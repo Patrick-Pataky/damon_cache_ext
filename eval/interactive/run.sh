@@ -19,11 +19,6 @@ ITERATIONS=1
 
 mkdir -p "$RESULTS_PATH"
 
-pushd "$POLICY_PATH"
-make clean
-make CACHE_SIZE_BITS=18
-popd
-
 #echo "Deleting Results"
 #rm results/interactive_results.json
 # Run Benchmark on TinyLFU
