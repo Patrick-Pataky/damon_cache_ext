@@ -30,7 +30,7 @@ if ! "$BASE_DIR/utils/disable-mglru.sh"; then
 	exit 1
 fi
 
-# Baseline and cache_ext
+# Baseline and cache_ext and damon
 python3 "$BENCH_PATH/bench_filesearch.py" \
 	--cpu 8 \
 	--policy-loader "$POLICY_PATH/cache_ext_mru.out" \
@@ -45,49 +45,5 @@ python3 "$BENCH_PATH/bench_filesearch.py" \
 	--results-file "$RESULTS_PATH/filesearch_results_tiny_mru.json" \
 	--data-dir "$FILES_PATH" \
 	--iterations "$ITERATIONS"
-
-# Enable MGLRU
-if ! "$BASE_DIR/utils/enable-mglru.sh"; then
-	echo "Failed to enable MGLRU. Please check the script."
-	exit 1
-fi
-
-# MGLRU
-# TODO: Remove --policy-loader requirement when using --default-only
-python3 "$BENCH_PATH/bench_filesearch.py" \
-	--cpu 8 \
-	--policy-loader "$POLICY_PATH/cache_ext_mru.out" \
-	--results-file "$RESULTS_PATH/filesearch_results_mglru.json" \
-	--data-dir "$FILES_PATH" \
-	--iterations "$ITERATIONS" \
-	--default-only
-
-# Disable MGLRU
-if ! "$BASE_DIR/utils/disable-mglru.sh"; then
-	echo "Failed to disable MGLRU. Please check the script."
-	exit 1
-fi
-
-# # DAMON_RECLAIM with baseline and cache_ext
-# if ! source "$BASE_DIR/utils/activate-damon.sh"; then
-# 	echo "Failed to source activate-damon.sh. Please check the script."
-# 	exit 1
-# fi
-
-# damon_reclaim_enable
-
-# for param in 1 2 3; do
-# 	echo "Setting DAMON_RECLAIM config profile c$param"
-# 	damon_reclaim_set_config "$param"
-
-# 	python3 "$BENCH_PATH/bench_filesearch.py" \
-# 		--cpu 8 \
-# 		--policy-loader "$POLICY_PATH/cache_ext_mru.out" \
-# 		--results-file "$RESULTS_PATH/filesearch_results_damon_$param.json" \
-# 		--data-dir "$FILES_PATH" \
-# 		--iterations "$ITERATIONS"
-# done
-
-# damon_reclaim_disable
 
 echo "File search benchmark completed. Results saved to $RESULTS_PATH."

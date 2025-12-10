@@ -28,15 +28,18 @@ damon_reclaim_show_parameters(){
 }
 
 damon_reclaim_enable(){
-    damon_reclaim_set 1 enabled
-    damon_reclaim_set 0 monitor_region_start
-    damon_reclaim_set $((1024*1024*1024*60)) monitor_region_end
-    damon_reclaim_set $((1024*1024*1024)) quota_sz
-    damon_reclaim_set 50 quota_ms
+#    damon_reclaim_set 1 enabled
+#    damon_reclaim_set 0 monitor_region_start
+#    damon_reclaim_set $((1024*1024*1024*60)) monitor_region_end
+#    damon_reclaim_set $((1024*1024*1024)) quota_sz
+#    damon_reclaim_set 50 quota_ms
+
+sudo damo start --kdamonds /home/damon/project/damon_cache_ext/utils/damon_config.json
 }
 
 damon_reclaim_disable(){
-    damon_reclaim_set 0 enabled
+#    damon_reclaim_set 0 enabled
+sudo damo stop
 }
 
 damon_reclaim_commit(){
