@@ -1,0 +1,455 @@
+#include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
+
+#include "cache_ext_lib.bpf.h"
+#include "dir_watcher.bpf.h"
+
+// #define STATS
+
+char _license[] SEC("license") = "GPL";
+
+// #define DEBUG
+#ifdef DEBUG
+    #define dbg_printk(fmt, ...) bpf_printk(fmt, ##__VA_ARGS__)
+#else
+    #define dbg_printk(fmt, ...)
+#endif
+
+// Constants
+#define CHAR_BIT 8
+#define PAGE_SHIFT 12
+#define NUM_BITS(type) (sizeof(type) * CHAR_BIT)
+
+// Default cache size bits if not provided by Makefile
+#ifndef CACHE_SIZE_BITS
+// 1GiB (= 2^30/2^12) -> 18 bits
+// 8GiB (= 2^33/2^12) -> 21 bits
+    #define CACHE_SIZE_BITS 18
+#endif
+
+#define DOORKEEPER_SIZE (1 << CACHE_SIZE_BITS)
+#define CBF_SIZE (1 << CACHE_SIZE_BITS)
+
+#define NUM_HASH_FUNCTIONS 4
+#define BITS_PER_COUNTER 4      // Must be a power of 2
+#define COUNTER_MASK ((1 << BITS_PER_COUNTER) - 1)
+
+#define SAMPLE_SIZE_BITS (BITS_PER_COUNTER + CACHE_SIZE_BITS)
+
+static u64 global_counter = 0;
+
+// Maps
+// Array sizes
+#define DOORKEEPER_MAP_SIZE (DOORKEEPER_SIZE / NUM_BITS(u64) + 1)
+#define CBF_MAP_SIZE (CBF_SIZE / (NUM_BITS(u64) / BITS_PER_COUNTER) + 1)
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, DOORKEEPER_MAP_SIZE);
+    __type(key, u32);
+    __type(value, u64);
+} doorkeeper_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, CBF_MAP_SIZE);
+    __type(key, u32);
+    __type(value, u64);
+} cbf_map SEC(".maps");
+
+#ifdef STATS
+    // Statistics Map
+    #define STAT_TOTAL_ACCESSES 0
+    #define STAT_ADMISSIONS 1
+    #define STAT_REJECTIONS 2
+    #define STAT_SKETCH_RESETS 3
+    #define STAT_DOORKEEPER_INSERTS 4
+    #define STAT_CBF_INSERTS 5
+    #define STAT_UNCONTESTED_ADMISSIONS 6
+    #define STAT_MAX 7
+
+    struct {
+        __uint(type, BPF_MAP_TYPE_ARRAY);
+        __uint(max_entries, STAT_MAX);
+        __type(key, u32);
+        __type(value, u64);
+    } tinylfu_stats SEC(".maps");
+
+    static __always_inline void inc_stat(u32 key) {
+        u64 *val = bpf_map_lookup_elem(&tinylfu_stats, &key);
+        if (val) {
+            __sync_fetch_and_add(val, 1);
+        }
+    }
+#endif
+
+// Hash function (Thomas Wang 64 bit Mix Function)
+static __always_inline u64 hash_64(u64 key) {
+    key = (~key) + (key << 21);
+    key = key ^ (key >> 24);
+    key = (key + (key << 3)) + (key << 8);
+    key = key ^ (key >> 14);
+    key = (key + (key << 2)) + (key << 4);
+    key = key ^ (key >> 28);
+    return key;
+}
+
+static __always_inline u64 get_folio_id(u64 ino, u64 index) {
+    // Simple bitwise mixing to avoid the overhead of multiple expensive hash calls.
+    // This technique (XOR with a rotated value) is a standard hash combination primitive,
+    // often used in high-performance hash maps (e.g., similar principles in Java's ConcurrentHashMap
+    // spread function or Boost's hash_combine) to diffuse bits without heavy arithmetic.
+    // We rotate by 29 (a prime number) to avoid alignment with byte boundaries.
+    // https://www.jucs.org/jucs_5_1/rotation_symmetric_functions_and/Pieprzyk_J.pdf
+    return ino ^ ((index << 29) | (index >> 35));
+}
+
+static __always_inline u64 get_folio_id_from_folio(struct folio *folio) {
+    return get_folio_id(folio->mapping->host->i_ino, folio->index);
+}
+
+static __always_inline void get_hashes(u64 key, u32 *h) {
+    u64 hash = hash_64(key);
+    u32 h1 = (u32)hash;
+    u32 h2 = (u32)(hash >> 32);
+
+    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        h[i] = h1 + i * h2;
+    }
+}
+
+// Doorkeeper operations
+static __always_inline bool doorkeeper_contains(u32 *h) {
+    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        u32 idx = h[i] % DOORKEEPER_SIZE;
+        u32 word_idx = idx / NUM_BITS(u64);
+        u32 bit_idx  = idx % NUM_BITS(u64);
+
+        u64 *val = bpf_map_lookup_elem(&doorkeeper_map, &word_idx);
+        if (!val) return false;
+        if (!(*val & (1ULL << bit_idx))) return false;
+    }
+    return true;
+}
+
+static __always_inline void doorkeeper_add(u32 *h) {
+    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        u32 idx = h[i] % DOORKEEPER_SIZE;
+        u32 word_idx = idx / NUM_BITS(u64);
+        u32 bit_idx  = idx % NUM_BITS(u64);
+
+        u64 *val = bpf_map_lookup_elem(&doorkeeper_map, &word_idx);
+        if (val) {
+            __sync_fetch_and_or(val, (1ULL << bit_idx));
+        }
+    }
+}
+
+// CBF operations
+static int reset_cbf_loop_callback(u32 index, void *ctx) {
+    u32 key = index;
+    u64 *val = bpf_map_lookup_elem(&cbf_map, &key);
+    if (!val) return 0;
+
+    // We need to halve each 4-bit counter in the 64-bit word
+    u64 v = *val;
+    u64 new_val = 0;
+    
+    #pragma unroll
+    for (int i = 0; i < NUM_BITS(u64) / BITS_PER_COUNTER; i++) {
+        u32 shift = i * BITS_PER_COUNTER;
+        u64 counter = (v >> shift) & COUNTER_MASK;
+        counter >>= 1;
+        new_val |= (counter << shift);
+    }
+    
+    *val = new_val;
+    return 0;
+}
+
+static int clear_doorkeeper_loop_callback(u32 index, void *ctx) {
+    u32 key = index;
+    u64 *val = bpf_map_lookup_elem(&doorkeeper_map, &key);
+    if (!val) return 0;
+    *val = 0;
+    return 0;
+}
+
+static __always_inline void cbf_reset() {
+    bpf_loop(CBF_MAP_SIZE, reset_cbf_loop_callback, NULL, 0);
+    bpf_loop(DOORKEEPER_MAP_SIZE, clear_doorkeeper_loop_callback, NULL, 0);
+}
+
+static __always_inline bool cbf_add(u32 *h) {
+    u32 min_val = 0xFFFFFFFF;
+    u32 vals[NUM_HASH_FUNCTIONS];
+
+    // 1. Find min value
+    #pragma unroll
+    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        u32 idx      = h[i] % CBF_SIZE;
+        u32 word_idx = idx / (NUM_BITS(u64) / BITS_PER_COUNTER);
+        u32 shift    = (idx % (NUM_BITS(u64) / BITS_PER_COUNTER)) * BITS_PER_COUNTER;
+
+        u64 *val_ptr = bpf_map_lookup_elem(&cbf_map, &word_idx);
+        if (val_ptr) {
+            vals[i] = (*val_ptr >> shift) & COUNTER_MASK;
+            if (vals[i] < min_val) min_val = vals[i];
+        } else {
+            vals[i] = 0;
+            min_val = 0;
+        }
+    }
+
+    // 2. Update counters
+    u32 new_min = min_val + 1;
+    if (new_min > COUNTER_MASK) new_min = COUNTER_MASK;
+
+    #pragma unroll
+    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        if (vals[i] < new_min) {
+            u32 idx      = h[i] % CBF_SIZE;
+            u32 word_idx = idx / (NUM_BITS(u64) / BITS_PER_COUNTER);
+            u32 shift    = (idx % (NUM_BITS(u64) / BITS_PER_COUNTER)) * BITS_PER_COUNTER;
+
+            u64 *val_ptr = bpf_map_lookup_elem(&cbf_map, &word_idx);
+            if (val_ptr) {
+                // TODO: can we safely ignore overflow into the next counter?
+                __sync_fetch_and_add(val_ptr, 1ULL << shift);
+            }
+        }
+    }
+
+    // 3. Global reset logic
+    __sync_fetch_and_add(&global_counter, 1);
+    if (global_counter >= (1ULL << SAMPLE_SIZE_BITS)) {
+        global_counter = 0;
+        cbf_reset();
+#ifdef STATS
+        inc_stat(STAT_SKETCH_RESETS);
+#endif
+    }
+
+    return new_min >= COUNTER_MASK;
+}
+
+static __always_inline u32 cbf_estimate(u32 *h) {
+    u32 min_val = 0xFFFFFFFF;
+    for (int i = 0; i < NUM_HASH_FUNCTIONS; i++) {
+        u32 idx      = h[i] % CBF_SIZE;
+        u32 word_idx = idx / (NUM_BITS(u64) / BITS_PER_COUNTER);
+        u32 shift    = (idx % (NUM_BITS(u64) / BITS_PER_COUNTER)) * BITS_PER_COUNTER;
+
+        u64 *val_ptr = bpf_map_lookup_elem(&cbf_map, &word_idx);
+        if (val_ptr) {
+            u32 val = (*val_ptr >> shift) & COUNTER_MASK;
+            if (val < min_val) min_val = val;
+        } else {
+            return 0;
+        }
+    }
+    return min_val;
+}
+
+static __always_inline u32 tinylfu_estimate(u64 addr) {
+    u32 h[NUM_HASH_FUNCTIONS];
+    get_hashes(addr, h);
+
+    u32 estimate = cbf_estimate(h);
+    if (doorkeeper_contains(h)) {
+        estimate += 1;
+    }
+    return estimate;
+}
+
+inline bool is_ino_relevant(u64 ino)
+{
+	return inode_in_watchlist(ino);
+}
+
+inline bool is_folio_relevant(struct folio *folio)
+{
+	if (!folio) {
+		return false;
+	}
+	if (folio->mapping == NULL) {
+		return false;
+	}
+	if (folio->mapping->host == NULL) {
+		return false;
+	}
+
+	return is_ino_relevant(folio->mapping->host->i_ino);
+}
+
+/******************************************************************************
+ * Backend Policy Inclusion ***************************************************
+ *****************************************************************************/
+
+#define CACHE_EXT_IS_BACKEND
+#define CACHE_EXT_SKIP_OPS
+
+// Default to MRU if no backend specified
+#ifndef POLICY_BACKEND_FILE
+#define POLICY_BACKEND_FILE "cache_ext_mru.bpf.c"
+#endif
+
+// Redefine BPF_STRUCT_OPS for backend inclusion to generate plain C functions
+// instead of BPF programs expecting context.
+#undef BPF_STRUCT_OPS
+#define BPF_STRUCT_OPS(name, ...) name(__VA_ARGS__)
+
+#undef BPF_STRUCT_OPS_SLEEPABLE
+#define BPF_STRUCT_OPS_SLEEPABLE(name, ...) name(__VA_ARGS__)
+
+#include POLICY_BACKEND_FILE
+
+#undef BPF_STRUCT_OPS
+#define BPF_STRUCT_OPS(name, args...) \
+	SEC("struct_ops/" #name)      \
+	BPF_PROG(name, ##args)
+
+#undef BPF_STRUCT_OPS_SLEEPABLE
+#define BPF_STRUCT_OPS_SLEEPABLE(name, args...) \
+	SEC("struct_ops.s/" #name)              \
+	BPF_PROG(name, ##args)
+
+
+/******************************************************************************
+ * TinyLFU Implementation *****************************************************
+ *****************************************************************************/
+
+s32 BPF_STRUCT_OPS_SLEEPABLE(tinylfu_init, struct mem_cgroup *memcg)
+{
+    dbg_printk("cache_ext: TinyLFU: Initialize TinyLFU\n");
+    return BACKEND_INIT(memcg);
+}
+
+void BPF_STRUCT_OPS(
+    tinylfu_evict_folios,
+    struct cache_ext_eviction_ctx *eviction_ctx,
+    struct mem_cgroup *memcg
+) {
+    BACKEND_EVICT_FOLIOS(eviction_ctx, memcg);
+}
+
+void BPF_STRUCT_OPS(tinylfu_folio_evicted, struct folio *folio) {
+    dbg_printk("cache_ext: TinyLFU: Evicted Folio %ld\n", folio->mapping->host->i_ino);
+    BACKEND_FOLIO_EVICTED(folio);
+}
+
+void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
+    if (!is_folio_relevant(folio))
+        return;
+
+    dbg_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
+    BACKEND_FOLIO_ADDED(folio);
+}
+
+void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
+    if (!is_folio_relevant(folio))
+        return;
+
+    dbg_printk("cache_ext: TinyLFU: Access:    %ld", folio->mapping->host->i_ino);
+
+    u64 id = get_folio_id_from_folio(folio);
+    u32 h[NUM_HASH_FUNCTIONS];
+    get_hashes(id, h);
+
+#ifdef STATS
+    inc_stat(STAT_TOTAL_ACCESSES);
+#endif
+
+    if (!doorkeeper_contains(h)) {
+        doorkeeper_add(h);
+#ifdef STATS
+        inc_stat(STAT_DOORKEEPER_INSERTS);
+#endif
+    } else {
+        cbf_add(h);
+#ifdef STATS
+        inc_stat(STAT_CBF_INSERTS);
+#endif
+    }
+
+    BACKEND_FOLIO_ACCESSED(folio);
+}
+
+/*
+ * Returns:
+ * - False: Admits folio and uses page cache normally
+ * - True:  Does not admit folio and causes that folio 
+ *          to bypass the page cache.
+ * 
+ * This might seem counter-intuitive, but that's how it is explained
+ * by the authors of cache_ext in 
+ * damon_cache_ext/rocksdb/cachestream/bpf/cachestream_admit_hook.bpf.c
+ */
+bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *admission_ctx) {
+    u64 new_id = get_folio_id(admission_ctx->ino, admission_ctx->offset >> PAGE_SHIFT);
+    u64 victim_id = get_folio_id(admission_ctx->victim_ino, admission_ctx->victim_page_offset);
+
+    if (victim_id == 0) {
+        // No victim (cache likely not full), always admit.
+#ifdef STATS
+        inc_stat(STAT_UNCONTESTED_ADMISSIONS);
+#endif
+        return false;
+    }
+
+    u32 h[NUM_HASH_FUNCTIONS];
+    get_hashes(new_id, h);
+
+    if (!doorkeeper_contains(h)) {
+        doorkeeper_add(h);
+#ifdef STATS
+        inc_stat(STAT_DOORKEEPER_INSERTS);
+#endif
+    } else {
+        cbf_add(h);
+#ifdef STATS
+        inc_stat(STAT_CBF_INSERTS);
+#endif
+    }
+
+    u32 new_est = tinylfu_estimate(new_id);
+    u32 victim_est = tinylfu_estimate(victim_id);
+
+    dbg_printk(
+        "TinyLFU: New %u vs Victim %u, Admit=%d\n",
+        new_est, victim_est, new_est >= victim_est
+    );
+
+    // If new_est >= victim_est, we want to ADMIT (return false).
+    // Otherwise, we want to REJECT (return true).
+    if (new_est >= victim_est) {
+#ifdef STATS
+        inc_stat(STAT_ADMISSIONS);
+#endif
+        return false;
+    } else {
+#ifdef STATS
+        inc_stat(STAT_REJECTIONS);
+#endif
+        return true;
+    }
+}
+
+bool BPF_STRUCT_OPS(tinylfu_filter_inode, u64 ino)
+{
+    bool res = is_ino_relevant(ino);
+    return res;
+}
+
+SEC(".struct_ops.link")
+struct cache_ext_ops tinylfu_ops = {
+    .init = (void *)tinylfu_init,
+    .evict_folios = (void *)tinylfu_evict_folios,
+    .folio_accessed = (void *)tinylfu_folio_accessed,
+    .folio_evicted = (void *)tinylfu_folio_evicted,
+    .folio_added = (void *)tinylfu_folio_added,
+    .admit_folio = (void *)tinylfu_folio_admission,
+    .filter_inode = (void *)tinylfu_filter_inode,
+};

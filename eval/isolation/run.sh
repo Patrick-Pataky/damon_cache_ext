@@ -30,6 +30,11 @@ fi
 
 mkdir -p "$RESULTS_PATH"
 
+pushd "$POLICY_PATH"
+make clean
+make CACHE_SIZE_BITS=21
+popd
+
 # Disable MGLRU
 if ! "$BASE_DIR/utils/disable-mglru.sh"; then
 	echo "Failed to disable MGLRU. Please check the script."
@@ -83,6 +88,47 @@ python3 "$BENCH_PATH/bench_per_cgroup.py" \
 	--policy-loader "$POLICY_PATH/cache_ext_sampling.out" \
 	--second-policy-loader "$POLICY_PATH/cache_ext_mru.out" \
 	--results-file "$RESULTS_PATH/per_cgroup_split_results.json" \
+	--leveldb-db "$DB_PATH" \
+	--leveldb-temp-db "$TEMP_DB_PATH" \
+	--bench-binary-dir "$YCSB_PATH/build" \
+	--iterations "$ITERATIONS" \
+	--benchmark ycsb_c
+
+# TinyLFU Variants
+
+python3 "$BENCH_PATH/bench_per_cgroup.py" \
+	--cpu 8 \
+	--search-path "$SEARCH_PATH" \
+	--data-dir "$FILES_PATH" \
+	--policy-loader "$POLICY_PATH/cache_ext_tiny_sampling.out" \
+	--second-policy-loader "$POLICY_PATH/cache_ext_tiny_sampling.out" \
+	--results-file "$RESULTS_PATH/per_cgroup_both_tiny_lfu_results.json" \
+	--leveldb-db "$DB_PATH" \
+	--leveldb-temp-db "$TEMP_DB_PATH" \
+	--bench-binary-dir "$YCSB_PATH/build" \
+	--iterations "$ITERATIONS" \
+	--benchmark ycsb_c
+
+python3 "$BENCH_PATH/bench_per_cgroup.py" \
+	--cpu 8 \
+	--search-path "$SEARCH_PATH" \
+	--data-dir "$FILES_PATH" \
+	--policy-loader "$POLICY_PATH/cache_ext_tiny_mru.out" \
+	--second-policy-loader "$POLICY_PATH/cache_ext_tiny_mru.out" \
+	--results-file "$RESULTS_PATH/per_cgroup_both_tiny_mru_results.json" \
+	--leveldb-db "$DB_PATH" \
+	--leveldb-temp-db "$TEMP_DB_PATH" \
+	--bench-binary-dir "$YCSB_PATH/build" \
+	--iterations "$ITERATIONS" \
+	--benchmark ycsb_c
+
+python3 "$BENCH_PATH/bench_per_cgroup.py" \
+	--cpu 8 \
+	--search-path "$SEARCH_PATH" \
+	--data-dir "$FILES_PATH" \
+	--policy-loader "$POLICY_PATH/cache_ext_tiny_sampling.out" \
+	--second-policy-loader "$POLICY_PATH/cache_ext_tiny_mru.out" \
+	--results-file "$RESULTS_PATH/per_cgroup_split_tiny_results.json" \
 	--leveldb-db "$DB_PATH" \
 	--leveldb-temp-db "$TEMP_DB_PATH" \
 	--bench-binary-dir "$YCSB_PATH/build" \

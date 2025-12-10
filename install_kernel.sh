@@ -35,6 +35,7 @@ scripts/config --set-str SYSTEM_REVOCATION_KEYS ''
 scripts/config --enable CONFIG_BPF_SYSCALL
 scripts/config --enable CONFIG_DEBUG_INFO_BTF
 scripts/config --enable CONFIG_DAMON_*
+scripts/config --enable CONFIG_PAGE_OWNER
 
 echo "Building and installing the kernel..."
 echo "If prompted, hit enter to continue."

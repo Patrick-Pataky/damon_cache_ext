@@ -7,7 +7,9 @@
 #include "dir_watcher.bpf.h"
 #include "cache_ext_lhd.bpf.h"
 
+#ifndef CACHE_EXT_IS_BACKEND
 char _license[] SEC("license") = "GPL";
+#endif
 
 static u64 next_reconfiguration = REQS_PER_RECONFIG;
 static u32 num_reconfigurations = 0;
@@ -74,12 +76,14 @@ static inline long rem_ewma_decay(u64 val) {
 	return val / 10;
 }
 
+#ifndef CACHE_EXT_IS_BACKEND
 static inline bool is_folio_relevant(struct folio *folio) {
 	if (!folio || !folio->mapping || !folio->mapping->host)
 		return false;
 
 	return inode_in_watchlist(folio->mapping->host->i_ino);
 }
+#endif
 
 static inline struct folio_metadata *get_folio_metadata(struct folio *folio) {
 	u64 key = (u64)folio;
@@ -492,6 +496,15 @@ void BPF_STRUCT_OPS(lhd_folio_added, struct folio *folio) {
 	}
 }
 
+#ifdef CACHE_EXT_IS_BACKEND
+#define BACKEND_INIT lhd_init
+#define BACKEND_EVICT_FOLIOS lhd_evict_folios
+#define BACKEND_FOLIO_ACCESSED lhd_folio_accessed
+#define BACKEND_FOLIO_EVICTED lhd_folio_evicted
+#define BACKEND_FOLIO_ADDED lhd_folio_added
+#endif
+
+#ifndef CACHE_EXT_SKIP_OPS
 SEC(".struct_ops.link")
 struct cache_ext_ops lhd_ops = {
 	.init = (void *)lhd_init,
@@ -500,3 +513,4 @@ struct cache_ext_ops lhd_ops = {
 	.folio_evicted = (void *)lhd_folio_evicted,
 	.folio_added = (void *)lhd_folio_added,
 };
+#endif

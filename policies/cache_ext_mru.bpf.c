@@ -6,7 +6,9 @@
 #include "cache_ext_lib.bpf.h"
 #include "dir_watcher.bpf.h"
 
+#ifndef CACHE_EXT_IS_BACKEND
 char _license[] SEC("license") = "GPL";
+#endif
 
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
@@ -19,6 +21,7 @@ char _license[] SEC("license") = "GPL";
 #endif
 
 
+#ifndef CACHE_EXT_IS_BACKEND
 inline bool is_folio_relevant(struct folio *folio)
 {
 	if (!folio) {
@@ -33,6 +36,7 @@ inline bool is_folio_relevant(struct folio *folio)
 	bool res = inode_in_watchlist(folio->mapping->host->i_ino);
 	return res;
 }
+#endif
 
 __u64 mru_list;
 
@@ -112,6 +116,15 @@ void BPF_STRUCT_OPS(mru_evict_folios, struct cache_ext_eviction_ctx *eviction_ct
 	}
 }
 
+#ifdef CACHE_EXT_IS_BACKEND
+#define BACKEND_INIT mru_init
+#define BACKEND_FOLIO_ADDED mru_folio_added
+#define BACKEND_FOLIO_ACCESSED mru_folio_accessed
+#define BACKEND_FOLIO_EVICTED mru_folio_evicted
+#define BACKEND_EVICT_FOLIOS mru_evict_folios
+#endif
+
+#ifndef CACHE_EXT_SKIP_OPS
 SEC(".struct_ops.link")
 struct cache_ext_ops mru_ops = {
 	.init = (void *)mru_init,
@@ -120,3 +133,4 @@ struct cache_ext_ops mru_ops = {
 	.folio_evicted = (void *)mru_folio_evicted,
 	.folio_added = (void *)mru_folio_added,
 };
+#endif
