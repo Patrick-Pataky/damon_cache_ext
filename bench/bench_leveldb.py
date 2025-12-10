@@ -259,7 +259,7 @@ class LevelDBBenchmark(BenchmarkFramework):
         if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
             self.cache_ext_policy.stop()
         elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            damon_reclaim_cleanup()
+            damon_reclaim_cleanup("leveldb")
         sleep(2)
         enable_smt()
 
