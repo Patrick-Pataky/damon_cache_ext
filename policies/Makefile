@@ -38,8 +38,9 @@ VMLINUX_H = vmlinux.h
 CLANG_BPF_SYS_INCLUDES ?= $(shell $(CLANG) -v -E - </dev/null 2>&1 \
 	| sed -n '/<...> search starts here:/,/End of search list./{ s| \(/.*\)|-idirafter \1|p }')
 
-# Exclude simple, get_scan, and tinylfu itself.
-TINYLFU_EXCLUDE = cache_ext_tinylfu.bpf.c cache_ext_simple.bpf.c cache_ext_get_scan.bpf.c
+# TinyLFU Variant Generation
+# Exclude simple, and tinylfu itself.
+TINYLFU_EXCLUDE = cache_ext_tinylfu.bpf.c cache_ext_simple.bpf.c
 TINYLFU_SRCS = $(filter-out $(TINYLFU_EXCLUDE), $(wildcard cache_ext_*.bpf.c))
 TINYLFU_VARIANTS = $(patsubst cache_ext_%.bpf.c, cache_ext_tiny_%.out, $(TINYLFU_SRCS))
 

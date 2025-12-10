@@ -6,7 +6,9 @@
 #include "cache_ext_lib.bpf.h"
 #include "dir_watcher.bpf.h"
 
+#ifndef CACHE_EXT_IS_BACKEND
 char _license[] SEC("license") = "GPL";
+#endif
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 #define INT64_MAX  (9223372036854775807LL)
@@ -128,6 +130,7 @@ inline u64 get_sampling_list(enum ListType list_type)
 	return *sampling_list;
 }
 
+#ifndef CACHE_EXT_IS_BACKEND
 inline bool is_folio_relevant(struct folio *folio)
 {
 	if (!folio) {
@@ -150,6 +153,7 @@ inline bool is_folio_relevant(struct folio *folio)
 	// }
 	return res;
 }
+#endif
 
 // SEC("struct_ops.s/mixed_init")
 s32 BPF_STRUCT_OPS_SLEEPABLE(mixed_init, struct mem_cgroup *memcg)
@@ -393,6 +397,15 @@ void BPF_STRUCT_OPS(mixed_evict_folios,
 			   eviction_ctx->folios_to_evict[32 - 1]);
 }
 
+#ifdef CACHE_EXT_IS_BACKEND
+#define BACKEND_INIT mixed_init
+#define BACKEND_EVICT_FOLIOS mixed_evict_folios
+#define BACKEND_FOLIO_ACCESSED mixed_folio_accessed
+#define BACKEND_FOLIO_EVICTED mixed_folio_evicted
+#define BACKEND_FOLIO_ADDED mixed_folio_added
+#endif
+
+#ifndef CACHE_EXT_SKIP_OPS
 SEC(".struct_ops.link")
 struct cache_ext_ops sampling_ops = {
 	.init = (void *)mixed_init,
@@ -401,3 +414,4 @@ struct cache_ext_ops sampling_ops = {
 	.folio_evicted = (void *)mixed_folio_evicted,
 	.folio_added = (void *)mixed_folio_added,
 };
+#endif
