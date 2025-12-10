@@ -12,6 +12,8 @@
 #include "dir_watcher.h"
 #include "cache_ext_tinylfu.skel.h"
 
+#define DEBUG
+
 char *USAGE = "Usage: ./cache_ext_tinylfu --watch_dir <dir> --cgroup_path <path>\n";
 struct cmdline_args {
 	char *watch_dir;
@@ -160,6 +162,26 @@ int main(int argc, char **argv) {
 		pause();
 	}
 	ret = 0;
+
+#ifdef DEBUG
+    // Print stats
+    uint32_t keys[] = {0, 1, 2, 3, 4, 5};
+    uint64_t values[6] = {0};
+    const char *names[] = {
+        "Total Accesses", "Admissions", "Rejections", 
+        "Sketch Resets", "Doorkeeper Inserts", "CBF Inserts"
+    };
+    
+    int stats_fd = bpf_map__fd(skel->maps.tinylfu_stats);
+    if (stats_fd >= 0) {
+        printf("\n--- TinyLFU Statistics ---\n");
+        for (int i = 0; i < 6; i++) {
+            bpf_map_lookup_elem(stats_fd, &keys[i], &values[i]);
+            printf("%-20s: %lu\n", names[i], values[i]);
+        }
+        printf("--------------------------\n");
+    }
+#endif
 
 cleanup:
 	close(cgroup_fd);

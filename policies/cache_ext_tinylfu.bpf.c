@@ -6,6 +6,8 @@
 #include "cache_ext_lib.bpf.h"
 #include "dir_watcher.bpf.h"
 
+#define STATS
+
 char _license[] SEC("license") = "GPL";
 
 // #define DEBUG
@@ -52,6 +54,31 @@ struct {
     __type(key, u32);
     __type(value, u64);
 } cbf_map SEC(".maps");
+
+#ifdef STATS
+    // Statistics Map
+    #define STAT_TOTAL_ACCESSES 0
+    #define STAT_ADMISSIONS 1
+    #define STAT_REJECTIONS 2
+    #define STAT_SKETCH_RESETS 3
+    #define STAT_DOORKEEPER_INSERTS 4
+    #define STAT_CBF_INSERTS 5
+    #define STAT_MAX 6
+
+    struct {
+        __uint(type, BPF_MAP_TYPE_ARRAY);
+        __uint(max_entries, STAT_MAX);
+        __type(key, u32);
+        __type(value, u64);
+    } tinylfu_stats SEC(".maps");
+
+    static __always_inline void inc_stat(u32 key) {
+        u64 *val = bpf_map_lookup_elem(&tinylfu_stats, &key);
+        if (val) {
+            __sync_fetch_and_add(val, 1);
+        }
+    }
+#endif
 
 // Hash function (Thomas Wang 64 bit Mix Function)
 static __always_inline u64 hash_64(u64 key) {
@@ -195,6 +222,9 @@ static __always_inline bool cbf_add(u32 *h) {
     if (global_counter >= (1ULL << SAMPLE_SIZE_BITS)) {
         global_counter = 0;
         cbf_reset();
+#ifdef STATS
+        inc_stat(STAT_SKETCH_RESETS);
+#endif
     }
 
     return new_min >= COUNTER_MASK;
@@ -372,10 +402,20 @@ void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
     u32 h[NUM_HASH_FUNCTIONS];
     get_hashes(id, h);
 
+#ifdef STATS
+    inc_stat(STAT_TOTAL_ACCESSES);
+#endif
+
     if (!doorkeeper_contains(h)) {
         doorkeeper_add(h);
+#ifdef STATS
+        inc_stat(STAT_DOORKEEPER_INSERTS);
+#endif
     } else {
         cbf_add(h);
+#ifdef STATS
+        inc_stat(STAT_CBF_INSERTS);
+#endif
     }
 
     mru_folio_accessed(folio);
@@ -410,13 +450,22 @@ bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *adm
 
     // If new_est > victim_est, we want to ADMIT (return false).
     // Otherwise, we want to REJECT (return true).
-    return true;
+    if (new_est > victim_est) {
+#ifdef STATS
+        inc_stat(STAT_ADMISSIONS);
+#endif
+        return false;
+    } else {
+#ifdef STATS
+        inc_stat(STAT_REJECTIONS);
+#endif
+        return true;
+    }
 }
 
 bool BPF_STRUCT_OPS(tinylfu_filter_inode, u64 ino)
 {
     bool res = is_ino_relevant(ino);
-    dbg_printk("cache_ext: TinyLFU: Filter: %llu -> is_relevant: %d\n", ino, res);
     return res;
 }
 
