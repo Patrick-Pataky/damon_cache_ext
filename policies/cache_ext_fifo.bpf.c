@@ -6,16 +6,20 @@
 #include "cache_ext_lib.bpf.h"
 #include "dir_watcher.bpf.h"
 
+#ifndef CACHE_EXT_IS_BACKEND
 char _license[] SEC("license") = "GPL";
+#endif
 
 static u64 main_list;
 
+#ifndef CACHE_EXT_IS_BACKEND
 static inline bool is_folio_relevant(struct folio *folio) {
 	if (!folio || !folio->mapping || !folio->mapping->host)
 		return false;
 
 	return inode_in_watchlist(folio->mapping->host->i_ino);
 }
+#endif
 
 s32 BPF_STRUCT_OPS_SLEEPABLE(fifo_init, struct mem_cgroup *memcg)
 {
@@ -66,6 +70,16 @@ void BPF_STRUCT_OPS(fifo_folio_added, struct folio *folio) {
 	}
 }
 
+#ifdef CACHE_EXT_IS_BACKEND
+#define BACKEND_INIT fifo_init
+#define BACKEND_FOLIO_ADDED fifo_folio_added
+// FIFO doesn't track access, so define as empty/NULL if needed, or handle in host
+#define BACKEND_FOLIO_ACCESSED(folio)
+#define BACKEND_FOLIO_EVICTED fifo_folio_evicted
+#define BACKEND_EVICT_FOLIOS fifo_evict_folios
+#endif
+
+#ifndef CACHE_EXT_SKIP_OPS
 SEC(".struct_ops.link")
 struct cache_ext_ops fifo_ops = {
 	.init = (void *)fifo_init,
@@ -73,3 +87,4 @@ struct cache_ext_ops fifo_ops = {
 	.folio_evicted = (void *)fifo_folio_evicted,
 	.folio_added = (void *)fifo_folio_added,
 };
+#endif
