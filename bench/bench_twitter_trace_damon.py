@@ -8,14 +8,12 @@ from typing import Dict, List
 
 from ruamel.yaml import YAML
 
-from bench_lib import (
+from bench_lib_damon import (
     CacheExtPolicy,
     BenchmarkFramework,
     BenchResults,
-    DEFAULT_BASELINE_CGROUP,
-    DEFAULT_CACHE_EXT_CGROUP,
-    DEFAULT_DAMON_CGROUP,
-    damon_reclaim_cleanup,
+    BASELINE_TEST_CGROUP,
+    DAMON_TEST_CGROUP,
     add_config_option,
     check_output,
     disable_smt,
@@ -26,8 +24,7 @@ from bench_lib import (
     format_bytes_str,
     parse_strings_string,
     recreate_baseline_cgroup,
-    recreate_cache_ext_cgroup,
-    recreate_damon_cgroup,
+    recreate_damon_test_cgroup,
     run,
     set_sysctl,
 )
@@ -120,6 +117,7 @@ def parse_leveldb_bench_results(stdout: str) -> Dict:
             #  ('SCAN average latency', '0.00'),
             #  ('SCAN p99 latency', '0.00'),
             #  ('READ_MODIFY_WRITE average latency', '0.00'),
+            #  ('READ_MODIFY_WRITE p99 latency', '0.00'),
             #  ('READ_MODIFY_WRITE p99 latency', '0.00')]
             for match in matches:
                 if "READ average latency" in match[0]:
@@ -158,10 +156,7 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
         super().__init__("leveldb_twitter_trace_benchmark", benchresults_cls, cli_args)
         if self.args.leveldb_temp_db is None:
             self.args.leveldb_temp_db = self.args.leveldb_db + "_temp"
-        self.cache_ext_policy = CacheExtPolicy(
-            DEFAULT_CACHE_EXT_CGROUP, self.args.policy_loader, self.args.leveldb_temp_db
-        )
-        CLEANUP_TASKS.append(lambda: self.cache_ext_policy.stop())
+        # Removed CacheExtPolicy initialization
 
     def add_arguments(self, parser: argparse.ArgumentParser):
         parser.add_argument(
@@ -176,12 +171,7 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
             default=None,
             help="Specify the temporary directory for LevelDB benchmarking. Default is <leveldb-db>_temp",
         )
-        parser.add_argument(
-            "--policy-loader",
-            type=str,
-            required=True,
-            help="Specify the path to the policy loader binary",
-        )
+        # Removed --policy-loader argument
         parser.add_argument(
             "--bench-binary-dir",
             type=str,
@@ -211,19 +201,16 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
         configs = add_config_option("cgroup_size_pct", [10], configs)
         if self.args.default_only:
             configs = add_config_option(
-                "cgroup_name", [DEFAULT_BASELINE_CGROUP], configs
+                "cgroup_name", [BASELINE_TEST_CGROUP], configs
             )
         else:
             configs = add_config_option(
                 "cgroup_name",
-                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP, DEFAULT_DAMON_CGROUP],
+                [BASELINE_TEST_CGROUP, DAMON_TEST_CGROUP],
                 configs,
             )
 
-        policy_loader_name = os.path.basename(self.cache_ext_policy.loader_path)
-        for config in configs:
-            if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-                config["policy_loader"] = policy_loader_name
+        # Removed policy_loader config logic
 
         configs = add_config_option(
             "iteration", list(range(1, self.args.iterations + 1)), configs
@@ -271,14 +258,9 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
             format_bytes_str(cgroup_size),
         )
 
-        if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-            recreate_cache_ext_cgroup(limit_in_bytes=cgroup_size)
-            if config["policy_loader"] == "cache_ext_s3fifo.out":
-                self.cache_ext_policy.start(cgroup_size=cgroup_size)
-            else:
-                self.cache_ext_policy.start()
-        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            recreate_damon_cgroup(limit_in_bytes=cgroup_size)
+        if config["cgroup_name"] == DAMON_TEST_CGROUP:
+            recreate_damon_test_cgroup(limit_in_bytes=cgroup_size)
+            # Removed CacheExtPolicy start
         else:
             recreate_baseline_cgroup(limit_in_bytes=cgroup_size)
 
@@ -324,12 +306,7 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
     def cmd_extra_envs(self, config):
         extra_envs = {}
         if (
-            config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP
-            and "mixed_get_scan" in config["benchmark"]
-        ):
-            extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
-        if (
-            config["cgroup_name"] == DEFAULT_DAMON_CGROUP
+            config["cgroup_name"] == DAMON_TEST_CGROUP
             and "mixed_get_scan" in config["benchmark"]
         ):
             extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
@@ -338,10 +315,7 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
         return extra_envs
 
     def after_benchmark(self, config):
-        if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-            self.cache_ext_policy.stop()
-        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            damon_reclaim_cleanup("twitter")
+        # Removed CacheExtPolicy stop
         sleep(2)
         enable_smt()
 

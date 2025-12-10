@@ -6,7 +6,7 @@ from typing import Dict, List
 import psutil
 from yanniszark_common.cmdutils import check_output
 
-from bench_lib import *
+from bench_lib_damon import *
 
 log = logging.getLogger(__name__)
 
@@ -77,11 +77,7 @@ class FioBenchmark(BenchmarkFramework):
         target_dir = self.args.target_dir
         if not os.path.exists(target_dir):
             os.mkdir(target_dir)
-        self.cache_ext_policy = CacheExtPolicy(
-            DEFAULT_CACHE_EXT_CGROUP, self.args.policy_loader, target_dir
-        )
-        if self.args.policy_loader:
-            CLEANUP_TASKS.append(lambda: self.cache_ext_policy.stop())
+        # Removed CacheExtPolicy initialization
         target_file = os.path.join(target_dir, "fio_benchfile")
         ensure_random_file(target_file)
 
@@ -89,12 +85,7 @@ class FioBenchmark(BenchmarkFramework):
         parser.add_argument(
             "--target-dir", type=str, required=True, help="File to benchmark against."
         )
-        parser.add_argument(
-            "--policy-loader",
-            type=str,
-            default="",
-            help="Specify the path to the policy loader binary. If empty, no policy will be used.",
-        )
+        # Removed --policy-loader argument
 
     def generate_configs(self, configs: List[Dict]) -> List[Dict]:
         configs = add_config_option(
@@ -108,19 +99,16 @@ class FioBenchmark(BenchmarkFramework):
         )
         if self.args.default_only:
             configs = add_config_option(
-                "cgroup_name", [DEFAULT_BASELINE_CGROUP], configs
+                "cgroup_name", [BASELINE_TEST_CGROUP], configs
             )
         else:
             configs = add_config_option(
                 "cgroup_name",
-                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP, DEFAULT_DAMON_CGROUP],
+                [BASELINE_TEST_CGROUP, DAMON_TEST_CGROUP],
                 configs,
             )
 
-        for config in configs:
-            if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-                policy_loader_name = os.path.basename(self.cache_ext_policy.loader_path)
-                config["policy_loader"] = policy_loader_name
+        # Removed policy_loader config logic
 
         return configs
 
@@ -132,15 +120,9 @@ class FioBenchmark(BenchmarkFramework):
             config["cgroup_name"],
             format_bytes_str(config["cgroup_size"]),
         )
-        if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-            recreate_cache_ext_cgroup(limit_in_bytes=config["cgroup_size"])
-            policy_loader_name = os.path.basename(self.cache_ext_policy.loader_path)
-            if policy_loader_name == "cache_ext_s3fifo.out":
-                self.cache_ext_policy.start(cgroup_size=config["cgroup_size"])
-            elif policy_loader_name:
-                self.cache_ext_policy.start()
-        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            recreate_damon_cgroup(limit_in_bytes=config["cgroup_size"])
+        if config["cgroup_name"] == DAMON_TEST_CGROUP:
+            recreate_damon_test_cgroup(limit_in_bytes=config["cgroup_size"])
+            # Removed CacheExtPolicy start
         else:
             recreate_baseline_cgroup(limit_in_bytes=config["cgroup_size"])
 
@@ -174,13 +156,7 @@ class FioBenchmark(BenchmarkFramework):
     def after_benchmark(self, config):
         log.info("Stopping CPU usage measurement")
         self.cpu_usage = sum(psutil.cpu_percent(percpu=True)[: config["cpus"]])
-        if (
-            config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP
-            and self.cache_ext_policy.loader_path
-        ):
-            self.cache_ext_policy.stop()
-        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            damon_reclaim_cleanup("fio")
+        # Removed CacheExtPolicy stop
         log.info("Deleting cgroup %s", config["cgroup_name"])
         delete_cgroup(config["cgroup_name"])
         enable_smt()

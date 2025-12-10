@@ -11,6 +11,7 @@ from bench_lib import (
     BenchRun,
     DEFAULT_BASELINE_CGROUP,
     DEFAULT_CACHE_EXT_CGROUP,
+    DEFAULT_DAMON_CGROUP,
 )
 
 
@@ -192,6 +193,8 @@ def make_name(config: Dict) -> str:
         return "Default (Linux)"
     elif config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
         return "cache_ext"
+    elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+        return "damon"
     return "<unknown>"
 
 

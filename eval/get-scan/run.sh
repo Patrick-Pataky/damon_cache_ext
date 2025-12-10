@@ -35,7 +35,7 @@ if ! "$BASE_DIR/utils/disable-mglru.sh"; then
 	exit 1
 fi
 
-# Baseline and cache_ext
+# Baseline and cache_ext and damon
 python3 "$BENCH_PATH/bench_leveldb.py" \
 	--cpu 8 \
 	--policy-loader "$POLICY_PATH/cache_ext_get_scan.out" \
@@ -46,29 +46,29 @@ python3 "$BENCH_PATH/bench_leveldb.py" \
 	--bench-binary-dir "$YCSB_PATH/build" \
 	--benchmark mixed_get_scan
 
-# Enable MGLRU
-if ! "$BASE_DIR/utils/enable-mglru.sh"; then
-	echo "Failed to enable MGLRU. Please check the script."
-	exit 1
-fi
+# # Enable MGLRU
+# if ! "$BASE_DIR/utils/enable-mglru.sh"; then
+# 	echo "Failed to enable MGLRU. Please check the script."
+# 	exit 1
+# fi
 
-# MGLRU
-# TODO: Remove --policy-loader requirement when using --default-only
-python3 "$BENCH_PATH/bench_leveldb.py" \
-	--cpu 8 \
-	--policy-loader "$POLICY_PATH/cache_ext_get_scan.out" \
-	--results-file "$RESULTS_PATH/get_scan_results_mglru.json" \
-	--leveldb-db "$DB_PATH" \
-	--fadvise-hints "" \
-	--iterations "$ITERATIONS" \
-	--bench-binary-dir "$YCSB_PATH/build" \
-	--benchmark mixed_get_scan \
-	--default-only
+# # MGLRU
+# # TODO: Remove --policy-loader requirement when using --default-only
+# python3 "$BENCH_PATH/bench_leveldb.py" \
+# 	--cpu 8 \
+# 	--policy-loader "$POLICY_PATH/cache_ext_get_scan.out" \
+# 	--results-file "$RESULTS_PATH/get_scan_results_mglru.json" \
+# 	--leveldb-db "$DB_PATH" \
+# 	--fadvise-hints "" \
+# 	--iterations "$ITERATIONS" \
+# 	--bench-binary-dir "$YCSB_PATH/build" \
+# 	--benchmark mixed_get_scan \
+# 	--default-only
 
-# Disable MGLRU
-if ! "$BASE_DIR/utils/disable-mglru.sh"; then
-	echo "Failed to disable MGLRU. Please check the script."
-	exit 1
-fi
+# # Disable MGLRU
+# if ! "$BASE_DIR/utils/disable-mglru.sh"; then
+# 	echo "Failed to disable MGLRU. Please check the script."
+# 	exit 1
+# fi
 
 echo "GET-SCAN benchmark completed. Results saved to $RESULTS_PATH."

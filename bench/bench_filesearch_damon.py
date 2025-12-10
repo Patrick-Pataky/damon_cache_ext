@@ -3,7 +3,7 @@ import os
 from time import time
 from typing import List, Dict
 
-from bench_lib import *
+from bench_lib_damon import *
 
 log = logging.getLogger(__name__)
 
@@ -14,10 +14,7 @@ CLEANUP_TASKS = []
 class FileSearchBenchmark(BenchmarkFramework):
     def __init__(self, benchresults_cls=BenchResults, cli_args=None):
         super().__init__("filesearch_benchmark", benchresults_cls, cli_args)
-        self.cache_ext_policy = CacheExtPolicy(
-            DEFAULT_CACHE_EXT_CGROUP, self.args.policy_loader, self.args.data_dir
-        )
-        CLEANUP_TASKS.append(lambda: self.cache_ext_policy.stop())
+        # Removed CacheExtPolicy initialization
 
     def add_arguments(self, parser: argparse.ArgumentParser):
         parser.add_argument(
@@ -26,33 +23,20 @@ class FileSearchBenchmark(BenchmarkFramework):
             required=True,
             help="Data directory",
         )
-        parser.add_argument(
-            "--policy-loader",
-            type=str,
-            required=True,
-            help="Specify the path to the policy loader binary",
-        )
-
-    def benchmark_cmd(self):
-        # Start the cache extension policy
-        self.cache_ext_policy.start()
-        # Run the benchmark
-        self.run_benchmark()
-        # Stop the cache extension policy
-        self.cache_ext_policy.stop()
+        # Removed --policy-loader argument
 
     def generate_configs(self, configs: List[Dict]) -> List[Dict]:
-        configs = add_config_option("passes", [10], configs)
+        configs = add_config_option("passes", [20], configs)
         configs = add_config_option("cgroup_size", [1 * GiB], configs)
         if self.args.default_only:
             configs = add_config_option(
-                "cgroup_name", [DEFAULT_BASELINE_CGROUP], configs
+                "cgroup_name", [BASELINE_TEST_CGROUP], configs
             )
 
         else:
             configs = add_config_option(
                 "cgroup_name",
-                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP, DEFAULT_DAMON_CGROUP],
+                [BASELINE_TEST_CGROUP, DAMON_TEST_CGROUP],
                 configs,
             )
 
@@ -66,11 +50,9 @@ class FileSearchBenchmark(BenchmarkFramework):
         drop_page_cache()
         disable_swap()
         disable_smt()
-        if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-            recreate_cache_ext_cgroup(limit_in_bytes=config["cgroup_size"])
-            self.cache_ext_policy.start()
-        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            recreate_damon_cgroup(limit_in_bytes=config["cgroup_size"])
+        if config["cgroup_name"] == DAMON_TEST_CGROUP:
+            recreate_damon_test_cgroup(limit_in_bytes=config["cgroup_size"])
+            # Removed CacheExtPolicy start
         else:
             recreate_baseline_cgroup(limit_in_bytes=config["cgroup_size"])
         self.start_time = time()
@@ -88,16 +70,18 @@ class FileSearchBenchmark(BenchmarkFramework):
             "memory:%s" % config["cgroup_name"],
             "/bin/sh",
             "-c",
-            repeated_rg_cmd,
+            repeated_rg_cmd
         ]
         return cmd
 
     def after_benchmark(self, config):
         self.end_time = time()
-        if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-            self.cache_ext_policy.stop()
-        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            damon_reclaim_cleanup("filesearch")
+        if config["cgroup_name"] == DAMON_TEST_CGROUP:
+            # Stop DAMON if needed, though recreate_damon_test_cgroup handles start
+            # and delete_cgroup handles stop implicitly via damo stop if we added it there.
+            # But bench_lib.py delete_cgroup calls damo stop.
+            pass
+        # Removed CacheExtPolicy stop
         enable_smt()
 
     def parse_results(self, stdout: str) -> BenchResults:

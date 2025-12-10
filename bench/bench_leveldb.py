@@ -168,7 +168,7 @@ class LevelDBBenchmark(BenchmarkFramework):
         else:
             configs = add_config_option(
                 "cgroup_name",
-                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP],
+                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP, DEFAULT_DAMON_CGROUP],
                 configs,
             )
 
@@ -184,6 +184,8 @@ class LevelDBBenchmark(BenchmarkFramework):
             elif config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
                 policy_loader_name = os.path.basename(self.cache_ext_policy.loader_path)
                 config["policy_loader"] = policy_loader_name
+                new_configs.append(config)
+            elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
                 new_configs.append(config)
             else:
                 new_configs.append(config)
@@ -206,6 +208,8 @@ class LevelDBBenchmark(BenchmarkFramework):
                 self.cache_ext_policy.start(cgroup_size=config["cgroup_size"])
             else:
                 self.cache_ext_policy.start()
+        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+            recreate_damon_cgroup(limit_in_bytes=config["cgroup_size"])
         else:
             recreate_baseline_cgroup(limit_in_bytes=config["cgroup_size"])
 
@@ -240,6 +244,11 @@ class LevelDBBenchmark(BenchmarkFramework):
             and "mixed_get_scan" in config["benchmark"]
         ):
             extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
+        if (
+            config["cgroup_name"] == DAMON_TEST_CGROUP
+            and "mixed_get_scan" in config["benchmark"]
+        ):
+            extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
         if config["enable_mmap"]:
             extra_envs["LEVELDB_MAX_MMAPS"] = "10000"
         if config["cgroup_name"] == DEFAULT_BASELINE_CGROUP and config["fadvise"] != "":
@@ -249,6 +258,8 @@ class LevelDBBenchmark(BenchmarkFramework):
     def after_benchmark(self, config):
         if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
             self.cache_ext_policy.stop()
+        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
+            damon_reclaim_cleanup()
         sleep(2)
         enable_smt()
 

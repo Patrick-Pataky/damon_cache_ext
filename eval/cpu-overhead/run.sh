@@ -25,7 +25,7 @@ if ! "$BASE_DIR/utils/disable-mglru.sh"; then
 	exit 1
 fi
 
-# Microbenchmark with fio for CPU overhead
+# Microbenchmark with fio for CPU overhead, should also do damon by default
 python3 "$BENCH_PATH/bench_fio.py" \
 	--cpu 8 \
 	--target-dir "$FIO_DIR" \

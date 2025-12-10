@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager, suppress
 from subprocess import CalledProcessError
 from time import sleep
+from time import time
 from typing import Dict, List, Union
 
 from ruamel.yaml import YAML
@@ -20,6 +21,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CACHE_EXT_CGROUP = "cache_ext_test"
 DEFAULT_BASELINE_CGROUP = "baseline_test"
+DEFAULT_DAMON_CGROUP = "damon_test"
 
 
 class CacheExtPolicy:
@@ -70,7 +72,7 @@ class CacheExtPolicy:
     def stop(self):
         if not self.has_started:
             raise Exception("Policy not started")
-        cmd = ["sudo", "kill", "-2", str(self._policy_thread.pid)]
+       	cmd = ["sudo", "kill", "-2", str(self._policy_thread.pid)]
         run(cmd)
         out, err = self._policy_thread.communicate()
         with suppress(subprocess.CalledProcessError):
@@ -223,6 +225,15 @@ def enable_cache_ext_for_cgroup(cgroup=DEFAULT_CACHE_EXT_CGROUP):
 
 def delete_cgroup(cgroup):
     with suppress(subprocess.CalledProcessError):
+        run(
+            [
+                "sudo",
+                "sh",
+                "-c",
+                "echo N > /sys/module/damon_reclaim/parameters/enabled",
+            ]
+        )
+    with suppress(subprocess.CalledProcessError):
         run(["sudo", "cgdelete", f"memory:{cgroup}"])
 
 
@@ -260,6 +271,84 @@ def recreate_baseline_cgroup(cgroup=DEFAULT_BASELINE_CGROUP, limit_in_bytes=2 * 
             "sh",
             "-c",
             "echo %d > /sys/fs/cgroup/%s/memory.max" % (limit_in_bytes, cgroup),
+        ]
+    )
+
+def recreate_damon_cgroup(cgroup=DEFAULT_DAMON_CGROUP, limit_in_bytes=2 * GiB):
+    delete_cgroup(cgroup)
+    # Create baseline cgroup
+    run(["sudo", "cgcreate", "-g", f"memory:{cgroup}"])
+
+    # Set memory limit for baseline cgroup
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "echo %d > /sys/fs/cgroup/%s/memory.max" % (limit_in_bytes, cgroup),
+        ]
+    )
+
+    setup_damon_reclaim()
+
+def setup_damon_reclaim():
+
+    damon_config = {
+        "min_age": 1000000,
+        "quota_ms": 250,
+        "quota_sz": 13421772800,  # 12 GiB
+        "wmarks_high": 999,
+        "wmarks_mid": 998,
+        "wmarks_low": 200,
+        "moniter_region_start": 4294967296,
+        #"moniter_region_end": 137438953472, MAYBE, but probably setup by default by damon, unless touched
+    }
+
+    for key, value in damon_config.items():
+        run(
+            [
+                "sudo",
+                "sh",
+                "-c",
+                f"echo {value} > /sys/module/damon_reclaim/parameters/{key}",
+            ]
+        )
+
+
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "echo Y > /sys/module/damon_reclaim/parameters/enabled",
+        ]
+    )
+
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "echo Y > /sys/module/damon_reclaim/parameters/commit_inputs", # fail-safe
+        ]
+    )
+
+def damon_reclaim_cleanup(bench_name="default"):
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "echo N > /sys/module/damon_reclaim/parameters/enabled",
+        ]
+    )
+
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            f"sudo damo reclaim > ../../results/damon_reclaim_stats_{bench_name}_{int(time.time())}.txt",
         ]
     )
 

@@ -2,42 +2,14 @@ import argparse
 import logging
 import os
 import re
-import subprocess
 from time import sleep
 from typing import Dict, List
 
-from ruamel.yaml import YAML
+from bench_lib_damon import *
 
-from bench_lib import (
-    CacheExtPolicy,
-    BenchmarkFramework,
-    BenchResults,
-    DEFAULT_BASELINE_CGROUP,
-    DEFAULT_CACHE_EXT_CGROUP,
-    DEFAULT_DAMON_CGROUP,
-    damon_reclaim_cleanup,
-    add_config_option,
-    check_output,
-    disable_smt,
-    disable_swap,
-    drop_page_cache,
-    edit_yaml_file,
-    enable_smt,
-    format_bytes_str,
-    parse_strings_string,
-    recreate_baseline_cgroup,
-    recreate_cache_ext_cgroup,
-    recreate_damon_cgroup,
-    run,
-    set_sysctl,
-)
 
-yaml = YAML()
 log = logging.getLogger(__name__)
 GiB = 2**30
-MiB = 2**20
-
-# These only run on error
 CLEANUP_TASKS = []
 
 
@@ -46,26 +18,6 @@ def reset_database(db_dir: str, temp_db_dir: str):
     if not db_dir.endswith("/"):
         db_dir += "/"
     run(["rsync", "-avpl", "--delete", db_dir, temp_db_dir])
-
-
-def dir_size(path: str) -> int:
-    # Check that path exists and is a directory
-    if not os.path.exists(path):
-        raise Exception("Directory not found: %s" % path)
-    if not os.path.isdir(path):
-        raise Exception("Not a directory: %s" % path)
-    cmd = ["du", "-sb", path]
-    result = check_output(cmd)
-    return int(result.split()[0])
-
-
-def file_size(path: str) -> int:
-    # Check that path exists and is a file
-    if not os.path.exists(path):
-        raise Exception("File not found: %s" % path)
-    if not os.path.isfile(path):
-        raise Exception("Not a file: %s" % path)
-    return os.path.getsize(path)
 
 
 def parse_leveldb_bench_results(stdout: str) -> Dict:
@@ -146,6 +98,7 @@ def parse_leveldb_bench_results(stdout: str) -> Dict:
                     results["read_modify_write_latency_p99"] = float(match[1])
                 else:
                     raise Exception("Unknown latency metric: " + match[0])
+
     if not all(
         key in results for key in ["throughput_avg", "latency_avg", "latency_p99"]
     ):
@@ -153,15 +106,12 @@ def parse_leveldb_bench_results(stdout: str) -> Dict:
     return results
 
 
-class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
+class LevelDBBenchmark(BenchmarkFramework):
     def __init__(self, benchresults_cls=BenchResults, cli_args=None):
-        super().__init__("leveldb_twitter_trace_benchmark", benchresults_cls, cli_args)
+        super().__init__("leveldb_benchmark", benchresults_cls, cli_args)
         if self.args.leveldb_temp_db is None:
             self.args.leveldb_temp_db = self.args.leveldb_db + "_temp"
-        self.cache_ext_policy = CacheExtPolicy(
-            DEFAULT_CACHE_EXT_CGROUP, self.args.policy_loader, self.args.leveldb_temp_db
-        )
-        CLEANUP_TASKS.append(lambda: self.cache_ext_policy.stop())
+        # Removed CacheExtPolicy initialization
 
     def add_arguments(self, parser: argparse.ArgumentParser):
         parser.add_argument(
@@ -176,12 +126,7 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
             default=None,
             help="Specify the temporary directory for LevelDB benchmarking. Default is <leveldb-db>_temp",
         )
-        parser.add_argument(
-            "--policy-loader",
-            type=str,
-            required=True,
-            help="Specify the path to the policy loader binary",
-        )
+        # Removed --policy-loader argument
         parser.add_argument(
             "--bench-binary-dir",
             type=str,
@@ -192,13 +137,13 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
             "--benchmark",
             type=str,
             required=True,
-            help="Specify the benchmark to run, e.g., twitter_cluster_17_bench",
+            help="Specify the benchmark to run, e.g., 'ycsb_a,ycsb_b,'",
         )
         parser.add_argument(
-            "--twitter-traces-dir",
+            "--fadvise-hints",
             type=str,
-            required=True,
-            help="Specify the directory containing Twitter trace metadata files",
+            default="",
+            help="Specify the fadvise hints to use for the baseline cgroup, e.g., ',SEQUENTIAL,NOREUSE,DONTNEED'",
         )
 
     def generate_configs(self, configs: List[Dict]) -> List[Dict]:
@@ -208,23 +153,33 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
         configs = add_config_option(
             "benchmark", parse_strings_string(self.args.benchmark), configs
         )
-        configs = add_config_option("cgroup_size_pct", [10], configs)
+        configs = add_config_option("cgroup_size", [10 * GiB], configs)
         if self.args.default_only:
             configs = add_config_option(
-                "cgroup_name", [DEFAULT_BASELINE_CGROUP], configs
+                "cgroup_name", [BASELINE_TEST_CGROUP], configs
             )
         else:
             configs = add_config_option(
                 "cgroup_name",
-                [DEFAULT_BASELINE_CGROUP, DEFAULT_CACHE_EXT_CGROUP, DEFAULT_DAMON_CGROUP],
+                [DAMON_TEST_CGROUP, BASELINE_TEST_CGROUP],
                 configs,
             )
 
-        policy_loader_name = os.path.basename(self.cache_ext_policy.loader_path)
+        # For baseline cgroup only, add fadvise options
+        fadvise_hints = parse_strings_string(self.args.fadvise_hints)
+        new_configs = []
         for config in configs:
-            if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-                config["policy_loader"] = policy_loader_name
-
+            if config["cgroup_name"] == BASELINE_TEST_CGROUP:
+                for fadvise in fadvise_hints:
+                    new_config = config.copy()
+                    new_config["fadvise"] = fadvise
+                    new_configs.append(new_config)
+            elif config["cgroup_name"] == DAMON_TEST_CGROUP:
+                # Removed policy_loader config
+                new_configs.append(config)
+            else:
+                new_configs.append(config)
+        configs = new_configs
         configs = add_config_option(
             "iteration", list(range(1, self.args.iterations + 1)), configs
         )
@@ -232,55 +187,14 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
 
     def benchmark_prepare(self, config):
         reset_database(self.args.leveldb_db, self.args.leveldb_temp_db)
-        drop_page_cache()
+        # drop_page_cache()
         disable_swap()
         disable_smt()
-        db_size = dir_size(self.args.leveldb_temp_db)
-        cgroup_size = int(db_size * config["cgroup_size_pct"] / 100)
-        # Add enough memory to load trace file into memory
-        bench_binary_dir = self.args.bench_binary_dir
-        bench_file = "../leveldb/config/%s.yaml" % config["benchmark"]
-        bench_file = os.path.abspath(os.path.join(bench_binary_dir, bench_file))
-
-        # Extract cluster number from benchmark name and construct trace file path
-        cluster_match = re.search(r"cluster(\d+)", config["benchmark"])
-        if cluster_match:
-            cluster_num = cluster_match.group(1)
-            trace_file = os.path.join(
-                self.args.twitter_traces_dir, f"cluster{cluster_num}_bench.txt"
-            )
+        if config["cgroup_name"] == DAMON_TEST_CGROUP:
+            recreate_damon_test_cgroup(limit_in_bytes=config["cgroup_size"])
+            # Removed CacheExtPolicy start
         else:
-            raise Exception(
-                "Could not extract cluster number from benchmark name: %s"
-                % config["benchmark"]
-            )
-
-        trace_file_size = file_size(trace_file)
-        # Load the trace file in memory to charge it to another cgroup
-        cmd = ["cat", trace_file]
-        run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # cgroup_size += int(trace_file_size * 1.5)
-        # cgroup_size *= 3
-        cgroup_size += 20 * MiB
-        cgroup_size = max(cgroup_size, 70 * MiB)
-
-        log.info(
-            "DB size: %s, trace file size: %s, cgroup size: %s",
-            format_bytes_str(db_size),
-            format_bytes_str(trace_file_size),
-            format_bytes_str(cgroup_size),
-        )
-
-        if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-            recreate_cache_ext_cgroup(limit_in_bytes=cgroup_size)
-            if config["policy_loader"] == "cache_ext_s3fifo.out":
-                self.cache_ext_policy.start(cgroup_size=cgroup_size)
-            else:
-                self.cache_ext_policy.start()
-        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            recreate_damon_cgroup(limit_in_bytes=cgroup_size)
-        else:
-            recreate_baseline_cgroup(limit_in_bytes=cgroup_size)
+            recreate_baseline_cgroup(limit_in_bytes=config["cgroup_size"])
 
     def benchmark_cmd(self, config):
         bench_binary_dir = self.args.bench_binary_dir
@@ -290,27 +204,12 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
         bench_file = os.path.abspath(os.path.join(bench_binary_dir, bench_file))
         if not os.path.exists(bench_file):
             raise Exception("Benchmark file not found: %s" % bench_file)
-
-        # Extract cluster number from benchmark name (e.g., "twitter_cluster_17_bench" -> "17")
-        cluster_match = re.search(r"cluster(\d+)", config["benchmark"])
-        if cluster_match:
-            cluster_num = cluster_match.group(1)
-            trace_file_path = os.path.join(
-                self.args.twitter_traces_dir, f"cluster{cluster_num}_bench.txt"
-            )
-        else:
-            raise Exception(
-                "Could not extract cluster number from benchmark name: %s"
-                % config["benchmark"]
-            )
-
         with edit_yaml_file(bench_file) as bench_config:
             bench_config["leveldb"]["data_dir"] = leveldb_temp_db_dir
             bench_config["workload"]["runtime_seconds"] = config["runtime_seconds"]
             bench_config["workload"]["warmup_runtime_seconds"] = config[
                 "warmup_runtime_seconds"
             ]
-            bench_config["workload"]["trace_file"] = trace_file_path
         cmd = [
             "sudo",
             "cgexec",
@@ -324,24 +223,18 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
     def cmd_extra_envs(self, config):
         extra_envs = {}
         if (
-            config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP
-            and "mixed_get_scan" in config["benchmark"]
-        ):
-            extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
-        if (
-            config["cgroup_name"] == DEFAULT_DAMON_CGROUP
+            config["cgroup_name"] == DAMON_TEST_CGROUP
             and "mixed_get_scan" in config["benchmark"]
         ):
             extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
         if config["enable_mmap"]:
             extra_envs["LEVELDB_MAX_MMAPS"] = "10000"
+        if config["cgroup_name"] == BASELINE_TEST_CGROUP and config["fadvise"] != "":
+            extra_envs["ENABLE_SCAN_FADVISE"] = config["fadvise"]
         return extra_envs
 
     def after_benchmark(self, config):
-        if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
-            self.cache_ext_policy.stop()
-        elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            damon_reclaim_cleanup("twitter")
+        # Removed CacheExtPolicy stop
         sleep(2)
         enable_smt()
 
@@ -352,7 +245,7 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
 
 def main():
     global log
-    leveldb_bench = LevelDBTwitterTraceBenchmark()
+    leveldb_bench = LevelDBBenchmark()
     set_sysctl("vm.dirty_background_ratio", 1)
     set_sysctl("vm.dirty_ratio", 30)
     CLEANUP_TASKS.append(lambda: set_sysctl("vm.dirty_background_ratio", 10))
