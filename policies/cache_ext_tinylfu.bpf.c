@@ -63,7 +63,8 @@ struct {
     #define STAT_SKETCH_RESETS 3
     #define STAT_DOORKEEPER_INSERTS 4
     #define STAT_CBF_INSERTS 5
-    #define STAT_MAX 6
+    #define STAT_UNCONTESTED_ADMISSIONS 6
+    #define STAT_MAX 7
 
     struct {
         __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -437,6 +438,9 @@ bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *adm
 
     if (victim_id == 0) {
         // No victim (cache likely not full), always admit.
+#ifdef STATS
+        inc_stat(STAT_UNCONTESTED_ADMISSIONS);
+#endif
         return false;
     }
 
