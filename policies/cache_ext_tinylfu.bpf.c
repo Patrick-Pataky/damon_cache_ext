@@ -444,17 +444,32 @@ bool BPF_STRUCT_OPS(tinylfu_folio_admission, struct cache_ext_admission_ctx *adm
         return false;
     }
 
+    u32 h[NUM_HASH_FUNCTIONS];
+    get_hashes(new_id, h);
+
+    if (!doorkeeper_contains(h)) {
+        doorkeeper_add(h);
+#ifdef STATS
+        inc_stat(STAT_DOORKEEPER_INSERTS);
+#endif
+    } else {
+        cbf_add(h);
+#ifdef STATS
+        inc_stat(STAT_CBF_INSERTS);
+#endif
+    }
+
     u32 new_est = tinylfu_estimate(new_id);
     u32 victim_est = tinylfu_estimate(victim_id);
 
     dbg_printk(
-        "cache_ext: TinyLFU: Estimate New %u vs Victim %u, admitting=%d\n",
-        new_est, victim_est, new_est > victim_est
+        "TinyLFU: New %u vs Victim %u, Admit=%d\n",
+        new_est, victim_est, new_est >= victim_est
     );
 
-    // If new_est > victim_est, we want to ADMIT (return false).
+    // If new_est >= victim_est, we want to ADMIT (return false).
     // Otherwise, we want to REJECT (return true).
-    if (new_est > victim_est) {
+    if (new_est >= victim_est) {
 #ifdef STATS
         inc_stat(STAT_ADMISSIONS);
 #endif
