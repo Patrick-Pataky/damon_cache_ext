@@ -29,6 +29,11 @@ POLICIES=(
 
 mkdir -p "$RESULTS_PATH"
 
+pushd "$POLICY_PATH"
+make clean
+make CACHE_SIZE_BITS=18
+popd
+
 # Build correct My-YCSB version
 cd "$YCSB_PATH/build"
 git checkout master
@@ -49,6 +54,19 @@ for POLICY in "${POLICIES[@]}"; do
 	python3 "$BENCH_PATH/bench_leveldb.py" \
 		--cpu 8 \
 		--policy-loader "$POLICY_PATH/${POLICY}.out" \
+		--results-file "$RESULTS_PATH/ycsb_results.json" \
+		--leveldb-db "$DB_PATH" \
+		--fadvise-hints "" \
+		--iterations "$ITERATIONS" \
+		--bench-binary-dir "$YCSB_PATH/build" \
+		--benchmark ycsb_a,ycsb_b,ycsb_c,ycsb_d,ycsb_e,ycsb_f,uniform,uniform_read_write
+
+	# TinyLFU version
+	TINY_POLICY=$(echo "$POLICY" | sed 's/cache_ext_/cache_ext_tiny_/')
+	echo "Running policy: ${TINY_POLICY}"
+	python3 "$BENCH_PATH/bench_leveldb.py" \
+		--cpu 8 \
+		--policy-loader "$POLICY_PATH/${TINY_POLICY}.out" \
 		--results-file "$RESULTS_PATH/ycsb_results.json" \
 		--leveldb-db "$DB_PATH" \
 		--fadvise-hints "" \

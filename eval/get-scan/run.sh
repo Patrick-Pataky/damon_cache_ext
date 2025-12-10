@@ -20,6 +20,11 @@ ITERATIONS=3
 
 mkdir -p "$RESULTS_PATH"
 
+pushd "$POLICY_PATH"
+make clean
+make CACHE_SIZE_BITS=18
+popd
+
 # Build correct My-YCSB version (leveldb-scan branch)
 # This branch includes SCAN changes to enable the GET-SCAN benchmark.
 cd "$YCSB_PATH/build"
@@ -40,6 +45,17 @@ python3 "$BENCH_PATH/bench_leveldb.py" \
 	--cpu 8 \
 	--policy-loader "$POLICY_PATH/cache_ext_get_scan.out" \
 	--results-file "$RESULTS_PATH/get_scan_results.json" \
+	--leveldb-db "$DB_PATH" \
+	--fadvise-hints ",SEQUENTIAL,NOREUSE,DONTNEED" \
+	--iterations "$ITERATIONS" \
+	--bench-binary-dir "$YCSB_PATH/build" \
+	--benchmark mixed_get_scan
+
+# TinyLFU (get_scan)
+python3 "$BENCH_PATH/bench_leveldb.py" \
+	--cpu 8 \
+	--policy-loader "$POLICY_PATH/cache_ext_tiny_get_scan.out" \
+	--results-file "$RESULTS_PATH/get_scan_results_tiny.json" \
 	--leveldb-db "$DB_PATH" \
 	--fadvise-hints ",SEQUENTIAL,NOREUSE,DONTNEED" \
 	--iterations "$ITERATIONS" \

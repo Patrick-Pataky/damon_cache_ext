@@ -28,6 +28,11 @@ CLUSTERS=(17 18 24 34 52)
 
 mkdir -p "$RESULTS_PATH"
 
+pushd "$POLICY_PATH"
+make clean
+make CACHE_SIZE_BITS=18
+popd
+
 # Build correct My-YCSB version (leveldb-latency branch)
 # This branch disables latency tracking to minimize memory usage due to the
 # small cgroup sizes used in these experiments.
@@ -53,6 +58,19 @@ for POLICY in "${POLICIES[@]}"; do
 		python3 "$BENCH_PATH/bench_twitter_trace.py" \
 			--cpu 8 \
 			--policy-loader "$POLICY_PATH/${POLICY}.out" \
+			--results-file "$RESULTS_PATH/twitter_traces_${CLUSTER}_results.json" \
+			--leveldb-db "$DB_DIRS/leveldb_twitter_cluster${CLUSTER}_db" \
+			--iterations "$ITERATIONS" \
+			--bench-binary-dir "$YCSB_PATH/build" \
+			--twitter-traces-dir "$DB_DIRS/twitter-traces" \
+			--benchmark "twitter_cluster${CLUSTER}_bench"
+
+		# TinyLFU version
+		TINY_POLICY=$(echo "$POLICY" | sed 's/cache_ext_/cache_ext_tiny_/')
+		echo "Running policy: ${TINY_POLICY} on cluster ${CLUSTER}"
+		python3 "$BENCH_PATH/bench_twitter_trace.py" \
+			--cpu 8 \
+			--policy-loader "$POLICY_PATH/${TINY_POLICY}.out" \
 			--results-file "$RESULTS_PATH/twitter_traces_${CLUSTER}_results.json" \
 			--leveldb-db "$DB_DIRS/leveldb_twitter_cluster${CLUSTER}_db" \
 			--iterations "$ITERATIONS" \
