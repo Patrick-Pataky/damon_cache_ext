@@ -6,7 +6,9 @@
 #include "cache_ext_lib.bpf.h"
 #include "dir_watcher.bpf.h"
 
+#ifndef CACHE_EXT_IS_BACKEND
 char _license[] SEC("license") = "GPL";
+#endif
 
 #define ENOENT		2  /* include/uapi/asm-generic/errno-base.h */
 #define INT64_MAX	(9223372036854775807LL)
@@ -53,12 +55,14 @@ static u64 small_list;
 static s64 small_list_size = 0;
 static s64 main_list_size = 0;
 
+#ifndef CACHE_EXT_IS_BACKEND
 static inline bool is_folio_relevant(struct folio *folio) {
 	if (!folio || !folio->mapping || !folio->mapping->host)
 		return false;
 
 	return inode_in_watchlist(folio->mapping->host->i_ino);
 }
+#endif
 
 static inline struct folio_metadata *get_folio_metadata(struct folio *folio) {
 	u64 key = (u64)folio;
@@ -369,6 +373,15 @@ void BPF_STRUCT_OPS(s3fifo_folio_added, struct folio *folio) {
 	}
 }
 
+#ifdef CACHE_EXT_IS_BACKEND
+#define BACKEND_INIT s3fifo_init
+#define BACKEND_EVICT_FOLIOS s3fifo_evict_folios
+#define BACKEND_FOLIO_ACCESSED s3fifo_folio_accessed
+#define BACKEND_FOLIO_EVICTED s3fifo_folio_evicted
+#define BACKEND_FOLIO_ADDED s3fifo_folio_added
+#endif
+
+#ifndef CACHE_EXT_SKIP_OPS
 SEC(".struct_ops.link")
 struct cache_ext_ops s3fifo_ops = {
 	.init = (void *)s3fifo_init,
@@ -377,3 +390,4 @@ struct cache_ext_ops s3fifo_ops = {
 	.folio_evicted = (void *)s3fifo_folio_evicted,
 	.folio_added = (void *)s3fifo_folio_added,
 };
+#endif

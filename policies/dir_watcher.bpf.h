@@ -62,7 +62,7 @@ int BPF_PROG(vfs_open_exit, struct path *path, struct file *file, long ret) {
     // {0} required due to verifier bug in Linux 6.6.8 compared to 6.6.14
     char filepath[BPF_PATH_MAX] = {0};
     long err;
-    if ((err = bpf_d_path(path, filepath, sizeof(filepath))) < 0) {
+    if ((err = bpf_d_path(&file->f_path, filepath, sizeof(filepath))) < 0) {
         bpf_printk("Failed to get file path: %ld\n", err);
         return 0;
     }

@@ -19,6 +19,11 @@ ITERATIONS=3
 
 mkdir -p "$RESULTS_PATH"
 
+pushd "$POLICY_PATH"
+make clean
+make CACHE_SIZE_BITS=18
+popd
+
 # Disable MGLRU
 if ! "$BASE_DIR/utils/disable-mglru.sh"; then
 	echo "Failed to disable MGLRU. Please check the script."
@@ -33,26 +38,12 @@ python3 "$BENCH_PATH/bench_filesearch.py" \
 	--data-dir "$FILES_PATH" \
 	--iterations "$ITERATIONS"
 
-# # Enable MGLRU
-# if ! "$BASE_DIR/utils/enable-mglru.sh"; then
-# 	echo "Failed to enable MGLRU. Please check the script."
-# 	exit 1
-# fi
-
-# # MGLRU
-# # TODO: Remove --policy-loader requirement when using --default-only
-# python3 "$BENCH_PATH/bench_filesearch.py" \
-# 	--cpu 8 \
-# 	--policy-loader "$POLICY_PATH/cache_ext_mru.out" \
-# 	--results-file "$RESULTS_PATH/filesearch_results_mglru.json" \
-# 	--data-dir "$FILES_PATH" \
-# 	--iterations "$ITERATIONS" \
-# 	--default-only
-
-# # Disable MGLRU
-# if ! "$BASE_DIR/utils/disable-mglru.sh"; then
-# 	echo "Failed to disable MGLRU. Please check the script."
-# 	exit 1
-# fi
+# Baseline and tinylfu (mru)
+python3 "$BENCH_PATH/bench_filesearch.py" \
+	--cpu 8 \
+	--policy-loader "$POLICY_PATH/cache_ext_tiny_mru.out" \
+	--results-file "$RESULTS_PATH/filesearch_results_tiny_mru.json" \
+	--data-dir "$FILES_PATH" \
+	--iterations "$ITERATIONS"
 
 echo "File search benchmark completed. Results saved to $RESULTS_PATH."

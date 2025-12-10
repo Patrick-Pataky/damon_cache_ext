@@ -68,3 +68,6 @@ perf.data*
 
 # vmlinux.h
 vmlinux.h
+
+dmesg
+trace
