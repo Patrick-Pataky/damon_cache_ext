@@ -6,7 +6,7 @@
 #include "cache_ext_lib.bpf.h"
 #include "dir_watcher.bpf.h"
 
-#define STATS
+// #define STATS
 
 char _license[] SEC("license") = "GPL";
 

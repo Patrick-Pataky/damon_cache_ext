@@ -16,7 +16,7 @@
 #endif
 #include SKEL_HEADER
 
-#define DEBUG
+// #define DEBUG
 
 char *USAGE = "Usage: ./cache_ext_tinylfu --watch_dir <dir> --cgroup_path <path>\n";
 struct cmdline_args {
