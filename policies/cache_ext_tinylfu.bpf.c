@@ -260,12 +260,6 @@ static __always_inline u32 tinylfu_estimate(u64 addr) {
     return estimate;
 }
 
-/******************************************************************************
- * MRU Backend Implementation *************************************************
- *****************************************************************************/
-
-__u64 mru_list;
-
 inline bool is_ino_relevant(u64 ino)
 {
 	return inode_in_watchlist(ino);
@@ -286,81 +280,38 @@ inline bool is_folio_relevant(struct folio *folio)
 	return is_ino_relevant(folio->mapping->host->i_ino);
 }
 
-static int iterate_mru(int idx, struct cache_ext_list_node *node)
-{
-	if ((idx < 200) && (!folio_test_uptodate(node->folio) || !folio_test_lru(node->folio))) {
-		return CACHE_EXT_CONTINUE_ITER;
-	}
-	return CACHE_EXT_EVICT_NODE;
-}
+/******************************************************************************
+ * Backend Policy Inclusion ***************************************************
+ *****************************************************************************/
 
-static int mru_init(struct mem_cgroup *memcg)
-{
-	dbg_printk("cache_ext: Hi from the mru_init hook! :D\n");
-	mru_list = bpf_cache_ext_ds_registry_new_list(memcg);
-	if (mru_list == 0) {
-		dbg_printk("cache_ext: Failed to create mru_list\n");
-		return -1;
-	}
-	dbg_printk("cache_ext: Created mru_list: %llu\n", mru_list);
-	return 0;
-}
+#define CACHE_EXT_IS_BACKEND
+#define CACHE_EXT_SKIP_OPS
 
-static void mru_folio_added(struct folio *folio)
-{
-	dbg_printk("cache_ext: Hi from the mru_folio_added hook! :D\n");
-	if (!is_folio_relevant(folio)) {
-		return;
-	}
+// Default to MRU if no backend specified
+#ifndef POLICY_BACKEND_FILE
+#define POLICY_BACKEND_FILE "cache_ext_mru.bpf.c"
+#endif
 
-	int ret = bpf_cache_ext_list_add(mru_list, folio);
-	    if (ret != 0) {
-        dbg_printk("cache_ext: Failed to add folio to mru_list, ret=%d\n", ret);
-        return;
-    }
-	dbg_printk("cache_ext: Added folio to mru_list\n");
-}
+// Redefine BPF_STRUCT_OPS for backend inclusion to generate plain C functions
+// instead of BPF programs expecting context.
+#undef BPF_STRUCT_OPS
+#define BPF_STRUCT_OPS(name, ...) name(__VA_ARGS__)
 
-static void mru_folio_accessed(struct folio *folio)
-{
-	int ret;
-	dbg_printk("cache_ext: Hi from the mru_folio_accessed hook! :D\n");
+#undef BPF_STRUCT_OPS_SLEEPABLE
+#define BPF_STRUCT_OPS_SLEEPABLE(name, ...) name(__VA_ARGS__)
 
-	if (!is_folio_relevant(folio)) {
-		return;
-	}
+#include POLICY_BACKEND_FILE
 
-	ret = bpf_cache_ext_list_move(mru_list, folio, false);
-	if (ret != 0) {
-		dbg_printk("cache_ext: Failed to move folio to mru_list head\n");
-		return;
-	}
+#undef BPF_STRUCT_OPS
+#define BPF_STRUCT_OPS(name, args...) \
+	SEC("struct_ops/" #name)      \
+	BPF_PROG(name, ##args)
 
-	dbg_printk("cache_ext: Moved folio to mru_list tail\n");
-}
+#undef BPF_STRUCT_OPS_SLEEPABLE
+#define BPF_STRUCT_OPS_SLEEPABLE(name, args...) \
+	SEC("struct_ops.s/" #name)              \
+	BPF_PROG(name, ##args)
 
-static void mru_folio_evicted(struct folio *folio)
-{
-	dbg_printk("cache_ext: Hi from the mru_folio_evicted hook! :D\n");
-	bpf_cache_ext_list_del(folio);
-}
-
-static void mru_evict_folios(struct cache_ext_eviction_ctx *eviction_ctx,
-	       struct mem_cgroup *memcg)
-{
-	dbg_printk("cache_ext: Hi from the mru_evict_folios hook! :D\n");
-	int ret = bpf_cache_ext_list_iterate(memcg, mru_list, iterate_mru,
-					     eviction_ctx);
-	// Check that the right amount of folios were evicted
-	if (ret < 0) {
-		dbg_printk("cache_ext: Failed to evict folios\n");
-	}
-	if (eviction_ctx->request_nr_folios_to_evict > eviction_ctx->nr_folios_to_evict) {
-		dbg_printk("cache_ext: Didn't evict enough folios. Requested: %d, Evicted: %d\n",
-			   eviction_ctx->request_nr_folios_to_evict,
-			   eviction_ctx->nr_folios_to_evict);
-	}
-}
 
 /******************************************************************************
  * TinyLFU Implementation *****************************************************
@@ -369,7 +320,7 @@ static void mru_evict_folios(struct cache_ext_eviction_ctx *eviction_ctx,
 s32 BPF_STRUCT_OPS_SLEEPABLE(tinylfu_init, struct mem_cgroup *memcg)
 {
     dbg_printk("cache_ext: TinyLFU: Initialize TinyLFU\n");
-    return mru_init(memcg);
+    return BACKEND_INIT(memcg);
 }
 
 void BPF_STRUCT_OPS(
@@ -377,12 +328,12 @@ void BPF_STRUCT_OPS(
     struct cache_ext_eviction_ctx *eviction_ctx,
     struct mem_cgroup *memcg
 ) {
-    mru_evict_folios(eviction_ctx, memcg);
+    BACKEND_EVICT_FOLIOS(eviction_ctx, memcg);
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_evicted, struct folio *folio) {
     dbg_printk("cache_ext: TinyLFU: Evicted Folio %ld\n", folio->mapping->host->i_ino);
-    mru_folio_evicted(folio);
+    BACKEND_FOLIO_EVICTED(folio);
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
@@ -390,7 +341,7 @@ void BPF_STRUCT_OPS(tinylfu_folio_added, struct folio *folio) {
         return;
 
     dbg_printk("cache_ext: TinyLFU: Added %ld\n", folio->mapping->host->i_ino);
-    mru_folio_added(folio);
+    BACKEND_FOLIO_ADDED(folio);
 }
 
 void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
@@ -419,7 +370,7 @@ void BPF_STRUCT_OPS(tinylfu_folio_accessed, struct folio *folio) {
 #endif
     }
 
-    mru_folio_accessed(folio);
+    BACKEND_FOLIO_ACCESSED(folio);
 }
 
 /*

@@ -6,7 +6,9 @@
 #include "cache_ext_lib.bpf.h"
 #include "dir_watcher.bpf.h"
 
+#ifndef CACHE_EXT_IS_BACKEND
 char _license[] SEC("license") = "GPL";
+#endif
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 #define INT64_MAX (9223372036854775807LL)
@@ -676,6 +678,7 @@ void set_eviction_metadata(struct eviction_metadata *eviction_meta) {
 	}
 }
 
+#ifndef CACHE_EXT_IS_BACKEND
 inline bool is_folio_relevant(struct folio *folio)
 {
 	if (!folio) {
@@ -690,6 +693,7 @@ inline bool is_folio_relevant(struct folio *folio)
 	bool res = inode_in_watchlist(folio->mapping->host->i_ino);
 	return res;
 }
+#endif
 
 s32 BPF_STRUCT_OPS_SLEEPABLE(mglru_init, struct mem_cgroup *memcg)
 {
@@ -912,6 +916,15 @@ void BPF_STRUCT_OPS(mglru_folio_evicted, struct folio *folio)
 	bpf_map_delete_elem(&folio_metadata_map, &key);
 }
 
+#ifdef CACHE_EXT_IS_BACKEND
+#define BACKEND_INIT mglru_init
+#define BACKEND_EVICT_FOLIOS mglru_evict_folios
+#define BACKEND_FOLIO_ACCESSED mglru_folio_accessed
+#define BACKEND_FOLIO_EVICTED mglru_folio_evicted
+#define BACKEND_FOLIO_ADDED mglru_folio_added
+#endif
+
+#ifndef CACHE_EXT_SKIP_OPS
 SEC(".struct_ops.link")
 struct cache_ext_ops mglru_ops = {
 	.init = (void *)mglru_init,
@@ -920,3 +933,4 @@ struct cache_ext_ops mglru_ops = {
 	.folio_evicted = (void *)mglru_folio_evicted,
 	.folio_added = (void *)mglru_folio_added,
 };
+#endif

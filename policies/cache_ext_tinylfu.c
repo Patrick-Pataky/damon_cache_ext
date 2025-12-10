@@ -10,7 +10,11 @@
 #include <unistd.h>
 
 #include "dir_watcher.h"
-#include "cache_ext_tinylfu.skel.h"
+
+#ifndef SKEL_HEADER
+#define SKEL_HEADER "cache_ext_tinylfu.skel.h"
+#endif
+#include SKEL_HEADER
 
 #define DEBUG
 
