@@ -97,7 +97,7 @@ class FileSearchBenchmark(BenchmarkFramework):
         if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
             self.cache_ext_policy.stop()
         elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            damon_reclaim_cleanup()
+            damon_reclaim_cleanup("filesearch")
         enable_smt()
 
     def parse_results(self, stdout: str) -> BenchResults:

@@ -341,7 +341,7 @@ class LevelDBTwitterTraceBenchmark(BenchmarkFramework):
         if config["cgroup_name"] == DEFAULT_CACHE_EXT_CGROUP:
             self.cache_ext_policy.stop()
         elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            damon_reclaim_cleanup()
+            damon_reclaim_cleanup("twitter")
         sleep(2)
         enable_smt()
 

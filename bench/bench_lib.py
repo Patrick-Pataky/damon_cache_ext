@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager, suppress
 from subprocess import CalledProcessError
 from time import sleep
+from time import time
 from typing import Dict, List, Union
 
 from ruamel.yaml import YAML
@@ -288,6 +289,32 @@ def recreate_damon_cgroup(cgroup=DEFAULT_DAMON_CGROUP, limit_in_bytes=2 * GiB):
         ]
     )
 
+    setup_damon_reclaim()
+
+def setup_damon_reclaim():
+
+    damon_config = {
+        "min_age": 1000000,
+        "quota_ms": 250,
+        "quota_sz": 13421772800,  # 12 GiB
+        "wmarks_high": 999,
+        "wmarks_mid": 998,
+        "wmarks_low": 200,
+        "moniter_region_start": 4294967296,
+        #"moniter_region_end": 137438953472, MAYBE, but probably setup by default by damon, unless touched
+    }
+
+    for key, value in damon_config.items():
+        run(
+            [
+                "sudo",
+                "sh",
+                "-c",
+                f"echo {value} > /sys/module/damon_reclaim/parameters/{key}",
+            ]
+        )
+
+
     run(
         [
             "sudo",
@@ -297,7 +324,16 @@ def recreate_damon_cgroup(cgroup=DEFAULT_DAMON_CGROUP, limit_in_bytes=2 * GiB):
         ]
     )
 
-def damon_reclaim_cleanup():
+    run(
+        [
+            "sudo",
+            "sh",
+            "-c",
+            "echo Y > /sys/module/damon_reclaim/parameters/commit_inputs", # fail-safe
+        ]
+    )
+
+def damon_reclaim_cleanup(bench_name="default"):
     run(
         [
             "sudo",
@@ -312,7 +348,7 @@ def damon_reclaim_cleanup():
             "sudo",
             "sh",
             "-c",
-            "sudo damo reclaim", # Print reclaim stats before stopping, must store them somewhere
+            f"sudo damo reclaim > ../../results/damon_reclaim_stats_{bench_name}_{int(time.time())}.txt",
         ]
     )
 

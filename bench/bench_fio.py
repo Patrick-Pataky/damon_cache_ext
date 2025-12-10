@@ -180,7 +180,7 @@ class FioBenchmark(BenchmarkFramework):
         ):
             self.cache_ext_policy.stop()
         elif config["cgroup_name"] == DEFAULT_DAMON_CGROUP:
-            damon_reclaim_cleanup()
+            damon_reclaim_cleanup("fio")
         log.info("Deleting cgroup %s", config["cgroup_name"])
         delete_cgroup(config["cgroup_name"])
         enable_smt()
