@@ -2,7 +2,13 @@
 # See: https://stackoverflow.com/questions/76035116/cannot-use-ebpf-kptr-ref-feature
 CLANG ?= clang-14
 BPFTOOL ?= /usr/local/sbin/bpftool #../../tools/bpf/bpftool/bpftool
-CFLAGS = -O2 -target bpf -D__TARGET_ARCH_$(ARCH) -c -g -Wall
+
+# Default Cache Size Bits (can be overridden: make CACHE_SIZE_BITS=20)
+CACHE_SIZE_BITS ?= 18
+
+CFLAGS = -O2 -target bpf -D__TARGET_ARCH_$(ARCH) \
+	 -DCACHE_SIZE_BITS=$(CACHE_SIZE_BITS) \
+	 -c -g -Wall
 USERSPACE_CFLAGS = -O2 -fsanitize=address -g -Wall
 USERSPACE_LINKER_FLAGS = -L/usr/local/lib64 -lbpf
 

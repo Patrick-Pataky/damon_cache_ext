@@ -21,16 +21,20 @@ char _license[] SEC("license") = "GPL";
 #define CHAR_BIT 8
 #define PAGE_SHIFT 12
 #define NUM_BITS(type) (sizeof(type) * CHAR_BIT)
-#define DOORKEEPER_SIZE 262144
-#define CBF_SIZE 262144
+
+// Default cache size bits if not provided by Makefile
+#ifndef CACHE_SIZE_BITS
+// 1GiB (= 2^30/2^12) -> 18 bits
+// 8GiB (= 2^33/2^12) -> 21 bits
+    #define CACHE_SIZE_BITS 18
+#endif
+
+#define DOORKEEPER_SIZE (1 << CACHE_SIZE_BITS)
+#define CBF_SIZE (1 << CACHE_SIZE_BITS)
+
 #define NUM_HASH_FUNCTIONS 4
 #define BITS_PER_COUNTER 4      // Must be a power of 2
 #define COUNTER_MASK ((1 << BITS_PER_COUNTER) - 1)
-
-// 1GiB (= 2^30/2^12)
-#define CACHE_SIZE_BITS 18
-// 8GiB (= 2^33/2^12)
-// #define CACHE_SIZE_BITS 21
 
 #define SAMPLE_SIZE_BITS (BITS_PER_COUNTER + CACHE_SIZE_BITS)
 
