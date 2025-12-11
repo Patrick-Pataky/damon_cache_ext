@@ -245,7 +245,7 @@ class LevelDBBenchmark(BenchmarkFramework):
         ):
             extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"
         if (
-            config["cgroup_name"] == DAMON_TEST_CGROUP
+            config["cgroup_name"] == DEFAULT_DAMON_CGROUP
             and "mixed_get_scan" in config["benchmark"]
         ):
             extra_envs["ENABLE_BPF_SCAN_MAP"] = "1"

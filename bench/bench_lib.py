@@ -300,8 +300,8 @@ def setup_damon_reclaim():
         "wmarks_high": 999,
         "wmarks_mid": 998,
         "wmarks_low": 200,
-        "moniter_region_start": 4294967296,
-        #"moniter_region_end": 137438953472, MAYBE, but probably setup by default by damon, unless touched
+        "monitor_region_start": 4294967296,
+        "monitor_region_end": 18253611007,
     }
 
     for key, value in damon_config.items():
@@ -348,7 +348,7 @@ def damon_reclaim_cleanup(bench_name="default"):
             "sudo",
             "sh",
             "-c",
-            f"sudo damo reclaim > ../../results/damon_reclaim_stats_{bench_name}_{int(time.time())}.txt",
+            f"sudo damo reclaim > /home/ubuntu/damon_cache_ext/results/damon_reclaim_stats_{bench_name}_{int(time())}.txt",
         ]
     )
 
