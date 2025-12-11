@@ -299,10 +299,10 @@ inline bool is_folio_relevant(struct folio *folio)
 // Redefine BPF_STRUCT_OPS for backend inclusion to generate plain C functions
 // instead of BPF programs expecting context.
 #undef BPF_STRUCT_OPS
-#define BPF_STRUCT_OPS(name, ...) name(__VA_ARGS__)
+#define BPF_STRUCT_OPS(name, ...) static name(__VA_ARGS__)
 
 #undef BPF_STRUCT_OPS_SLEEPABLE
-#define BPF_STRUCT_OPS_SLEEPABLE(name, ...) name(__VA_ARGS__)
+#define BPF_STRUCT_OPS_SLEEPABLE(name, ...) static name(__VA_ARGS__)
 
 #include POLICY_BACKEND_FILE
 

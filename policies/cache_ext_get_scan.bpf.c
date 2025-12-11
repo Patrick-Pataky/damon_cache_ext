@@ -118,7 +118,7 @@ inline s64 get_stat(char (*stat_name)[MAX_STAT_NAME_LEN]) {
 	return 0;
 }
 
-inline u64 get_sampling_list(enum ListType list_type)
+static inline u64 get_sampling_list(enum ListType list_type)
 {
 	int map_key = (int) list_type;
 	u64 *sampling_list;

@@ -41,7 +41,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__type(key, struct ghost_entry);
 	__type(value, u8);
-	//__uint(max_entries, CACHE_SIZE); // TODO: change
+	__uint(max_entries, 51200); // CACHE_SIZE approx
 	__uint(map_flags, BPF_F_NO_COMMON_LRU);  // Per-CPU LRU eviction logic
 } ghost_map SEC(".maps");
 
@@ -146,7 +146,7 @@ static int bpf_s3fifo_score_small_fn(int idx, struct cache_ext_list_node *a)
 	return CACHE_EXT_EVICT_NODE;
 }
 
-static void evict_main(struct cache_ext_eviction_ctx *eviction_ctx, struct mem_cgroup *memcg)
+static void __attribute__((unused)) evict_main(struct cache_ext_eviction_ctx *eviction_ctx, struct mem_cgroup *memcg)
 {
 	/*
 	 * Iterate from head. If freq > 0, move to tail, freq--.
