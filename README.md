@@ -54,6 +54,8 @@ git submodule update --init --recursive
 Next, you must compile and install the custom Linux kernel:
 
 ```sh
+./utils/make_linux_patch.sh --apply
+cd linux && git commit -a -m "Applied cache_ext patch" && cd ..
 ./install_kernel.sh
 ```
 
